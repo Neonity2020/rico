@@ -11,6 +11,7 @@
 
 pub mod code;
 pub mod inline;
+pub mod list;
 pub mod table;
 
 use ratatui::{
@@ -21,6 +22,7 @@ use ratatui::{
 use self::{
     code::render_code_block,
     inline::{is_horizontal_rule, render_paragraph, RULE_FG},
+    list::{parse_list_item, render_list},
     table::{is_table_row, is_table_separator, parse_alignments, parse_row, render_table},
 };
 
@@ -131,6 +133,47 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
             continue;
         }
 
+        // List block: - , * , + , 1. , - [ ] etc.
+        if parse_list_item(raw).is_some() {
+            let mut list_lines = Vec::new();
+            while i < lines.len() {
+                let current = lines[i].as_str();
+                if current.trim().is_empty() {
+                    break;
+                }
+                if current.trim_start().starts_with("```") || is_horizontal_rule(current) {
+                    break;
+                }
+                let cur_trim = current.trim_start();
+                if cur_trim.starts_with("# ")
+                    || cur_trim.starts_with("## ")
+                    || cur_trim.starts_with("### ")
+                {
+                    break;
+                }
+                if is_table_row(current)
+                    && i + 1 < lines.len()
+                    && is_table_separator(lines[i + 1].as_str())
+                {
+                    break;
+                }
+                if parse_list_item(current).is_some()
+                    || current.starts_with("  ")
+                    || current.starts_with('\t')
+                {
+                    list_lines.push(current.to_string());
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            if !out.is_empty() && !out.last().is_some_and(|l| l.spans.is_empty()) {
+                out.push(Line::raw(""));
+            }
+            out.extend(render_list(&list_lines, width));
+            continue;
+        }
+
         // Plain paragraph(s). Collect contiguous non-empty lines into one block.
         let mut paragraph = Vec::new();
         while i < lines.len() {
@@ -149,6 +192,9 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
                 || cur_trim.starts_with("## ")
                 || cur_trim.starts_with("### ")
             {
+                break;
+            }
+            if parse_list_item(current).is_some() {
                 break;
             }
             if is_table_row(current)
@@ -261,6 +307,18 @@ mod tests {
             s.content.contains("处理多行文本建议") && s.style.add_modifier.contains(Modifier::BOLD)
         });
         assert!(has_bold, "heading must be styled with BOLD modifier");
+    }
+
+    #[test]
+    fn renders_markdown_lists_with_bullets_and_hanging_indent() {
+        let md = "- 表格只放短文本（年份、状态、简短标题）。\n- 详细说明（如大事记）采用 Master-Detail：\n  光标选中行。\n1. 第一步\n2. 第二步\n- [x] 完成任务\n- [ ] 未完成任务";
+        let lines = render(md, 80);
+        let flat = flatten(&lines);
+        assert!(flat.contains("• 表格只放短文本"));
+        assert!(flat.contains("1. 第一步"));
+        assert!(flat.contains("2. 第二步"));
+        assert!(flat.contains("☑ 完成任务"));
+        assert!(flat.contains("☐ 未完成任务"));
     }
 
     #[test]

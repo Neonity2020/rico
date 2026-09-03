@@ -46,10 +46,18 @@ pub fn wrap_styled_line(line: Line<'static>, width: usize) -> Vec<Line<'static>>
     let mut used = 0;
     for span in line.spans {
         for grapheme in span.content.graphemes(true) {
+            let is_space = grapheme.chars().all(char::is_whitespace);
+            if used == 0 && is_space && !lines.is_empty() {
+                continue;
+            }
+
             let grapheme_width = UnicodeWidthStr::width(grapheme);
             if used + grapheme_width > width && !current.is_empty() {
                 lines.push(Line::from(std::mem::take(&mut current)));
                 used = 0;
+                if is_space {
+                    continue;
+                }
             }
             push_merged_span(&mut current, grapheme, span.style);
             used += grapheme_width;
