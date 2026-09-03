@@ -87,24 +87,41 @@ struct ChatRequest<'a> {
     stream_options: Option<StreamOptions>,
 }
 
+#[derive(Clone)]
 pub struct OpenAiProvider {
     client: Client,
+    name: String,
     api_key: String,
     base_url: String,
     model: String,
 }
 
 impl OpenAiProvider {
+    #[cfg(test)]
     pub fn new(api_key: String, base_url: String, model: String) -> Self {
+        Self::named("openai-compatible", api_key, base_url, model)
+    }
+
+    pub fn named(
+        name: impl Into<String>,
+        api_key: String,
+        base_url: String,
+        model: String,
+    ) -> Self {
         Self {
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .build()
                 .expect("reqwest client configuration must be valid"),
+            name: name.into(),
             api_key,
             base_url: base_url.trim_end_matches('/').to_owned(),
             model,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn model_name(&self) -> &str {

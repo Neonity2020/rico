@@ -1,25 +1,79 @@
 # rico
 
-一个最小 Rust coding agent，通过 MiniMax 中国站 Token Plan 的 OpenAI 兼容接口驱动，默认使用 `MiniMax-M3`。
+一个最小 Rust coding agent，可通过 MiniMax 或 9Router 的 OpenAI 兼容接口驱动，并可在 TUI 中运行时切换 provider。
 
 ## 配置
 
-编辑用户级配置 `~/.config/rico/config.env`，并将权限设为仅自己可读写：
+认证信息使用与 Pi 相同的 credential 结构，保存在 `~/.config/rico/auth.json`：
 
-```dotenv
-OPENAI_API_KEY=你的-sk-cp-Token-Plan-Key
-OPENAI_BASE_URL=https://api.minimaxi.com/v1
-OPENAI_MODEL=MiniMax-M3
-AGENT_MAX_STEPS=20
+```json
+{
+  "minimax": {
+    "type": "api_key",
+    "key": "你的-MiniMax-API-Key"
+  },
+  "9router": {
+    "type": "api_key",
+    "key": "你的-9Router-API-Key"
+  }
+}
 ```
 
-Token Plan Key 与按量付费 API Key 不互通。请在 MiniMax 中国站的“接口密钥”页面创建或复制 `sk-cp-` Key。
+推荐从现有配置自动导入，rico 会以 `0600` 权限创建文件：
+
+```bash
+rico auth import
+rico auth list
+rico auth path
+```
+
+导入并确认启动正常后，从 `config.env` 删除 `MINIMAX_API_KEY`、`ROUTER_API_KEY` 和旧版 `OPENAI_API_KEY`。`auth.json` 优先于环境变量；环境变量仅用于兼容和迁移。可用 `RICO_AUTH` 指定其他认证文件路径。
+
+非敏感设置继续放在用户级配置 `~/.config/rico/config.env`：
+
+```dotenv
+# 可选：minimax 或 9router；不设置时 MiniMax 优先
+# RICO_PROVIDER=minimax
+
+MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+MINIMAX_MODEL=MiniMax-M3
+
+ROUTER_BASE_URL=http://localhost:20128/v1
+ROUTER_MODEL=kr/claude-sonnet-4.5
+# AGENT_MAX_STEPS=20  # 可选：默认无轮数限制
+```
+
+只需配置实际使用的 provider；同时配置两组 API Key 后即可在 TUI 内切换。`RICO_PROVIDER` 控制启动时使用的 provider，可设为 `minimax` 或 `9router`。如果未设置，则使用配置列表中的第一个 provider（MiniMax 优先）。
+
+使用 9Router 前，先在 Dashboard 中连接上游 provider、生成 API Key，并将模型名改成已启用的模型或 combo。使用 9Router Cloud 时，将 `ROUTER_BASE_URL` 改为 `https://9router.com/v1`。
 
 ```bash
 chmod 600 ~/.config/rico/config.env
 ```
 
-也可以用 `RICO_CONFIG` 指定其他配置路径，或直接设置环境变量。密钥读取后会从 agent 子进程环境中移除。
+也可以用 `RICO_CONFIG` 指定其他非敏感配置路径。旧版的 `OPENAI_BASE_URL`、`OPENAI_MODEL` 仍作为 MiniMax 配置的兼容回退。环境变量中的密钥读取后会从 agent 子进程环境中移除。
+
+### 在 TUI 中切换 provider
+
+```text
+/providers          # 查看当前及所有已配置 provider
+/provider            # 在已配置 provider 间轮换
+/provider 9router    # 切换到 9Router
+/provider minimax    # 切换到 MiniMax
+```
+
+切换后，状态栏和模型名称会立即更新；当前对话上下文会保留，下一次模型请求开始使用新 provider。
+
+### 在 TUI 中登录
+
+新用户可直接在 TUI 输入：
+
+```text
+/login minimax
+/login 9router
+```
+
+随后在输入框中输入 API Key 并按 Enter。输入内容会被掩码，不会进入会话历史；成功后凭证会写入 `auth.json`，并立即启用对应 provider。按 Esc 可取消登录。
 
 ## 多轮对话
 
@@ -112,7 +166,7 @@ rico 采用 Pi 风格的动态工具注册表，默认向模型提供：
 
 文件工具拒绝密钥文件、凭据目录和符号链接路径。`bash` 默认超时 120 秒，可由模型设置为最长 600 秒；标准输出和错误输出在读取过程中即实施有界采集，最终保留末尾最多 50KB 或 2,000 行。
 
-MiniMax Key 存放在工作区外，读取后会从 rico 进程环境中移除，因此不会作为环境变量传给 shell。不过 `bash` 与当前用户拥有相同的系统权限，应只在可信项目中使用。
+MiniMax 与 9Router Key 存放在工作区外的 `auth.json` 中；新文件权限为 `0600`，coding tools 也会拒绝访问任何名为 `auth.json` 的路径。环境变量兼容方式读取的密钥会从 rico 进程环境中移除，因此不会传给 shell。不过 `bash` 与当前用户拥有相同的系统权限，应只在可信项目中使用。
 
 ## License
 

@@ -113,12 +113,12 @@ import { Keyboard, Command, Settings, ArrowDownUp } from 'lucide-astro';
           <h4 class="text-sm font-bold text-white font-mono">多级配置加载优先级</h4>
         </div>
         <p class="text-xs text-gray-400 font-mono leading-relaxed mb-3">
-          1. 环境变量 <span class="text-white">OPENAI_API_KEY</span><br />
-          2. <span class="text-white">.env.local</span> / <span class="text-white">.env</span> (当前工作区目录)<br />
-          3. <span class="text-white">~/.config/rico/config.env</span> (用户级全局配置)
+          1. 凭证：<span class="text-white">~/.config/rico/auth.json</span><br />
+          2. 非敏感配置：<span class="text-white">.env.local</span> / <span class="text-white">.env</span><br />
+          3. 用户级配置：<span class="text-white">~/.config/rico/config.env</span>
         </p>
         <div class="text-[11px] font-mono text-gray-500 border-t border-white/5 pt-2">
-          凭证防护：OPENAI_API_KEY 不会传给子进程；bash 仍具有当前用户权限，应只在可信项目中使用。
+          凭证防护：provider API Key 不会传给子进程；bash 仍具有当前用户权限，应只在可信项目中使用。
         </div>
       </div>
     </div>

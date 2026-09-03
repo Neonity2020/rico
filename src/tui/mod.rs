@@ -35,6 +35,8 @@ use self::{
 };
 
 pub async fn run(mut agent: Agent) -> Result<()> {
+    let provider = agent.provider_name().to_owned();
+    let providers = agent.provider_names();
     let model = agent.model_name().to_owned();
     let session_path = agent.session_path().map(PathBuf::from);
     let initial_tokens = agent.estimated_tokens();
@@ -62,6 +64,8 @@ pub async fn run(mut agent: Agent) -> Result<()> {
     let agent_handle = tokio::spawn(run_agent(agent, cmd_rx, event_tx));
 
     let mut app = App::new(model, session_path, cwd);
+    app.provider = provider;
+    app.providers = providers;
     app.tokens = initial_tokens;
     app.cache_stats = initial_cache_stats;
     let mut input_events = EventStream::new();
@@ -133,6 +137,26 @@ async fn run_agent(
                     let _ = events.send(AgentEvent::Error(format!("{error:#}")));
                 }
             }
+            UserCommand::SwitchProvider(requested) => {
+                match agent.switch_provider(requested.as_deref()) {
+                    Ok((provider, model)) => {
+                        let _ = events.send(AgentEvent::ProviderChanged { provider, model });
+                    }
+                    Err(error) => {
+                        let _ = events.send(AgentEvent::Error(format!("{error:#}")));
+                    }
+                }
+            }
+            UserCommand::LoginProvider { provider, key } => {
+                match agent.login_provider(&provider, key) {
+                    Ok((provider, model)) => {
+                        let _ = events.send(AgentEvent::ProviderChanged { provider, model });
+                    }
+                    Err(error) => {
+                        let _ = events.send(AgentEvent::Error(format!("登录失败：{error:#}")));
+                    }
+                }
+            }
             UserCommand::Reset => {
                 if let Err(error) = agent.clear_history() {
                     let _ = events.send(AgentEvent::Error(format!("{error:#}")));
@@ -189,7 +213,7 @@ fn restore_terminal() -> Result<()> {
 mod tests {
     use super::{
         app::{Entry, SelectionPoint, Status, PHILOSOPHIES},
-        editor::cursor_position,
+        editor::{cursor_position, wrap_text},
         event::{handle_key, handle_mouse},
         selection::selected_text,
         view::{line_text, render, render_welcome, visible_assistant_text},
@@ -274,6 +298,19 @@ mod tests {
         assert_eq!(cursor_position("中文", "中文".len(), 10), (4, 0));
         assert_eq!(cursor_position("a\n中", "a\n中".len(), 10), (2, 1));
         assert_eq!(cursor_position("1234567890", 10, 10), (0, 1));
+    }
+
+    #[test]
+    fn word_wrapping_and_kinsoku_punctuation() {
+        let text = "Master-Detail (Viewport / Markdown Widget)";
+        let wrapped = wrap_text(text, 25);
+        assert_eq!(wrapped[0], "Master-Detail (Viewport /");
+        assert_eq!(wrapped[1], "Markdown Widget)");
+
+        let cjk_punct = "这是一段很长的文字，用于测试标点符号。";
+        let wrapped_cjk = wrap_text(cjk_punct, 18);
+        assert!(!wrapped_cjk[1].starts_with('，'));
+        assert!(!wrapped_cjk[1].starts_with('。'));
     }
 
     #[test]
@@ -430,6 +467,65 @@ mod tests {
         } else {
             panic!("第二条 entry 应为 Info");
         }
+    }
+
+    #[test]
+    fn provider_commands_list_and_switch_configured_providers() {
+        let mut app = App::new("MiniMax-M3".into(), None, "~/code".into());
+        app.provider = "minimax".into();
+        app.providers = vec!["minimax".into(), "9router".into()];
+        let (tx, mut rx) = mpsc::unbounded_channel::<UserCommand>();
+
+        app.input = "/providers".into();
+        app.submit(&tx);
+        assert!(matches!(
+            app.entries.last(),
+            Some(Entry::Info(info)) if info.contains("minimax（当前）") && info.contains("9router")
+        ));
+
+        app.input = "/provider 9router".into();
+        app.submit(&tx);
+        assert!(app.busy);
+        assert_eq!(app.status, Status::SwitchingProvider);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(UserCommand::SwitchProvider(Some(name))) if name == "9router"
+        ));
+
+        app.apply_agent_event(AgentEvent::ProviderChanged {
+            provider: "9router".into(),
+            model: "kr/claude-sonnet-4.5".into(),
+        });
+        assert_eq!(app.provider, "9router");
+        assert_eq!(app.model, "kr/claude-sonnet-4.5");
+        assert!(!app.busy);
+    }
+
+    #[test]
+    fn login_command_masks_key_and_does_not_add_it_to_history() {
+        let mut app = App::new("MiniMax-M3".into(), None, "~/code".into());
+        let (tx, mut rx) = mpsc::unbounded_channel::<UserCommand>();
+
+        app.input = "/login 9router".into();
+        app.submit(&tx);
+        assert_eq!(app.login_provider.as_deref(), Some("9router"));
+        assert!(app
+            .entries
+            .iter()
+            .all(|entry| { !matches!(entry, Entry::User(text) if text.contains("9router-key")) }));
+
+        app.input = "9router-secret".into();
+        app.cursor = app.input.len();
+        app.submit(&tx);
+        assert!(app.busy);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(UserCommand::LoginProvider { provider, key })
+                if provider == "9router" && key == "9router-secret"
+        ));
+        assert!(app.entries.iter().all(|entry| {
+            !matches!(entry, Entry::User(text) | Entry::Info(text) if text.contains("9router-secret"))
+        }));
     }
 
     #[test]

@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -46,7 +47,7 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub fn coding_tools(root: PathBuf) -> Self {
+    pub fn coding_tools(root: PathBuf, exa_api_key: Option<String>) -> Self {
         let mut registry = Self {
             tools: HashMap::new(),
         };
@@ -54,6 +55,7 @@ impl ToolRegistry {
         registry.register(WriteTool::new(root.clone()));
         registry.register(EditTool::new(root.clone()));
         registry.register(BashTool::new(root));
+        registry.register(WebSearchTool::new(exa_api_key));
         registry
     }
 
@@ -372,6 +374,171 @@ impl Tool for BashTool {
     }
 }
 
+pub struct WebSearchTool {
+    api_key: Option<String>,
+    auth_path: Option<PathBuf>,
+    client: reqwest::Client,
+}
+
+impl WebSearchTool {
+    pub fn new(api_key: Option<String>) -> Self {
+        Self {
+            api_key,
+            auth_path: crate::auth::auth_path().ok(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .unwrap_or_default(),
+        }
+    }
+
+    fn resolve_api_key(&self) -> Option<String> {
+        if let Some(ref key) = self.api_key {
+            if !key.trim().is_empty() && !key.starts_with("your-") {
+                return Some(key.clone());
+            }
+        }
+        if let Ok(key) = env::var("EXA_API_KEY") {
+            if !key.trim().is_empty() && !key.starts_with("your-") {
+                return Some(key);
+            }
+        }
+        if let Some(path) = self.auth_path.clone() {
+            if let Ok(store) = crate::auth::AuthStore::load(path) {
+                if let Some(key) = store.api_key("exa") {
+                    if !key.trim().is_empty() && !key.starts_with("your-") {
+                        return Some(key);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+#[derive(Deserialize)]
+struct ExaSearchResponse {
+    #[serde(default)]
+    results: Vec<ExaSearchResult>,
+}
+
+#[derive(Deserialize)]
+struct ExaSearchResult {
+    title: Option<String>,
+    url: String,
+    #[serde(default)]
+    highlights: Vec<String>,
+    text: Option<String>,
+}
+
+impl Tool for WebSearchTool {
+    fn name(&self) -> &'static str {
+        "web_search"
+    }
+
+    fn description(&self) -> &'static str {
+        "Search the web using Exa AI search engine. Returns relevant webpages with titles, URLs, and concise highlights or text snippets."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of search results to return (1-10, default: 5)",
+                    "minimum": 1,
+                    "maximum": 10
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        })
+    }
+
+    fn execute<'a>(&'a self, arguments: &'a str) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let Some(api_key) = self.resolve_api_key() else {
+                anyhow::bail!(
+                    "未配置 EXA_API_KEY。请在 ~/.config/rico/config.env 或 .env 中设置 EXA_API_KEY=your_key，或存入 auth.json (exa 凭证)。"
+                );
+            };
+
+            let args: Value = serde_json::from_str(arguments).context("无效的 JSON 参数")?;
+            let query = required_str(&args, "query")?;
+            let num_results = args
+                .get("num_results")
+                .and_then(Value::as_u64)
+                .map(|n| n.clamp(1, 10))
+                .unwrap_or(5);
+
+            let body = json!({
+                "query": query,
+                "numResults": num_results,
+                "contents": {
+                    "highlights": true,
+                    "text": true
+                }
+            });
+
+            let response = self
+                .client
+                .post("https://api.exa.ai/search")
+                .header("x-api-key", &api_key)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .context("发送 Exa 搜索请求失败")?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Exa API 请求失败 ({status}): {error_text}");
+            }
+
+            let search_response: ExaSearchResponse = response
+                .json()
+                .await
+                .context("解析 Exa 搜索响应 JSON 失败")?;
+
+            if search_response.results.is_empty() {
+                return Ok("未找到相关搜索结果。".to_string());
+            }
+
+            let mut output = String::new();
+            for (index, result) in search_response.results.iter().enumerate() {
+                let title = result.title.as_deref().unwrap_or("Untitled").trim();
+                output.push_str(&format!("{}. [{}]({})\n", index + 1, title, result.url));
+
+                if !result.highlights.is_empty() {
+                    for highlight in &result.highlights {
+                        let h = highlight.trim();
+                        if !h.is_empty() {
+                            output.push_str(&format!("   - {h}\n"));
+                        }
+                    }
+                } else if let Some(text) = &result.text {
+                    let snippet = text.trim();
+                    if !snippet.is_empty() {
+                        let single_line = snippet.replace(['\r', '\n'], " ");
+                        let truncated: String = single_line.chars().take(300).collect();
+                        output.push_str(&format!("   {truncated}…\n"));
+                    }
+                }
+                output.push('\n');
+            }
+
+            Ok(output.trim_end().to_string())
+        })
+    }
+}
+
 async fn read_bounded_tail(mut reader: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
     let mut tail = VecDeque::with_capacity(MAX_OUTPUT_BYTES);
     let mut chunk = [0_u8; 8 * 1024];
@@ -449,6 +616,7 @@ fn is_sensitive_path(path: &Path) -> bool {
                     | ".npmrc"
                     | ".pypirc"
                     | ".ssh"
+                    | "auth.json"
                     | "credentials"
                     | "id_ed25519"
                     | "id_rsa"
@@ -488,20 +656,30 @@ mod tests {
 
     #[test]
     fn registry_has_pi_coding_tools() {
-        let registry = ToolRegistry::coding_tools(PathBuf::from("."));
+        let registry = ToolRegistry::coding_tools(PathBuf::from("."), None);
         let names = registry
             .definitions()
             .into_iter()
             .map(|tool| tool["function"]["name"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(names, ["bash", "edit", "read", "write"]);
+        assert_eq!(names, ["bash", "edit", "read", "web_search", "write"]);
+    }
+
+    #[tokio::test]
+    async fn web_search_without_key_reports_helpful_error() {
+        let mut tool = WebSearchTool::new(None);
+        tool.auth_path = None;
+        let result = tool.execute(r#"{"query":"rust async"}"#).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("未配置 EXA_API_KEY"));
     }
 
     #[tokio::test]
     async fn edit_requires_exactly_one_match() {
         let root = temp_workspace();
         fs::write(root.join("sample.txt"), "before\nbefore\n").unwrap();
-        let registry = ToolRegistry::coding_tools(root.clone());
+        let registry = ToolRegistry::coding_tools(root.clone(), None);
         let result = registry
             .execute(
                 "edit",
@@ -515,7 +693,7 @@ mod tests {
     #[tokio::test]
     async fn bash_executes_shell_commands() {
         let root = temp_workspace();
-        let registry = ToolRegistry::coding_tools(root.clone());
+        let registry = ToolRegistry::coding_tools(root.clone(), None);
         let result = registry
             .execute("bash", r#"{"command":"printf rico"}"#)
             .await;
@@ -537,6 +715,7 @@ mod tests {
         let workspace = Workspace::new(PathBuf::from("/tmp/workspace"));
         assert!(workspace.path("../secret").is_err());
         assert!(workspace.path(".env").is_err());
+        assert!(workspace.path("auth.json").is_err());
         assert!(workspace.path("nested/id_rsa").is_err());
     }
 

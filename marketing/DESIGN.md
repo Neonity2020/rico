@@ -100,7 +100,7 @@
 ## 5. 标志性视觉组件规范 (Signature Components)
 
 ### 5.1 动态模拟终端 (Interactive Simulated TUI)
-- **外观**：macOS 风格三色圆点红黄绿控制区，顶部居中标题 `rico — MiniMax-M3 — 约 1,234 词元 · CH85.2% · 就绪`；
+- **外观**：macOS 风格三色圆点红黄绿控制区，顶部居中标题 `rico — kr/claude-sonnet-4.5 — 约 1,234 词元 · CH85.2% · 就绪`；
 - **边框**：1px `border-white/10` + `shadow-[0_0_50px_-12px_rgba(110,190,180,0.2)]` 外光晕；
 - **动态特性**：
   - 自动打字机效果模拟用户提问；

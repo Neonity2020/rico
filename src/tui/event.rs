@@ -123,6 +123,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, tx: &UnboundedSender<UserCommand
         {
             app.should_quit = true;
         }
+        KeyCode::Esc if app.login_provider.is_some() => app.cancel_login(),
         KeyCode::Esc if app.input.is_empty() => app.should_quit = true,
         KeyCode::Esc => {
             app.input.clear();

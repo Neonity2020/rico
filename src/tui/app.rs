@@ -74,6 +74,8 @@ pub fn select_philosophy_index() -> usize {
 #[derive(Debug)]
 pub enum UserCommand {
     Submit(String),
+    SwitchProvider(Option<String>),
+    LoginProvider { provider: String, key: String },
     Reset,
     Shutdown,
 }
@@ -95,6 +97,9 @@ pub enum Entry {
 pub enum Status {
     Idle,
     Thinking,
+    EnteringApiKey,
+    SavingCredentials,
+    SwitchingProvider,
     RunningTool(String),
     Compacting,
 }
@@ -104,6 +109,9 @@ impl Status {
         match self {
             Self::Idle => "就绪".into(),
             Self::Thinking => "正在思考…".into(),
+            Self::EnteringApiKey => "请输入 API Key…".into(),
+            Self::SavingCredentials => "正在保存认证信息…".into(),
+            Self::SwitchingProvider => "正在切换 provider…".into(),
             Self::RunningTool(name) => format!("正在运行 {name}…"),
             Self::Compacting => "正在压缩上下文…".into(),
         }
@@ -170,14 +178,17 @@ pub struct App {
     pub selection_anchor: Option<SelectionPoint>,
     pub selection_focus: Option<SelectionPoint>,
     pub selecting: bool,
+    pub login_provider: Option<String>,
     pub philosophy_index: usize,
+    pub provider: String,
+    pub providers: Vec<String>,
     pub model: String,
     pub cwd: String,
     pub session_path: Option<PathBuf>,
     pub tokens: usize,
     pub cache_stats: CacheStats,
     pub status: Status,
-    pub step: Option<(usize, usize)>,
+    pub step: Option<(usize, Option<usize>)>,
     pub busy: bool,
     pub should_quit: bool,
     pub tick: usize,
@@ -200,7 +211,10 @@ impl App {
             selection_anchor: None,
             selection_focus: None,
             selecting: false,
+            login_provider: None,
             philosophy_index: select_philosophy_index(),
+            provider: String::new(),
+            providers: Vec::new(),
             model,
             cwd,
             session_path,
@@ -253,6 +267,18 @@ impl App {
             AgentEvent::Usage(usage) => {
                 self.cache_stats.record_usage(&usage);
             }
+            AgentEvent::ProviderChanged { provider, model } => {
+                if !self.providers.iter().any(|name| name == &provider) {
+                    self.providers.push(provider.clone());
+                }
+                self.provider = provider;
+                self.model = model;
+                self.entries.push(Entry::Info(format!(
+                    "已切换到 {}（模型 {}）",
+                    self.provider, self.model
+                )));
+                self.finish_turn();
+            }
         }
         self.transcript_scroll.scroll_to_end();
         self.tokens = estimate_tokens(self);
@@ -279,6 +305,91 @@ impl App {
             return;
         }
         let trimmed = self.input.trim();
+        if let Some(provider) = self.login_provider.take() {
+            let key = std::mem::take(&mut self.input);
+            self.cursor = 0;
+            self.detach_history();
+            if key.trim().is_empty() {
+                self.login_provider = Some(provider);
+                self.status = Status::EnteringApiKey;
+                return;
+            }
+            self.busy = true;
+            self.status = Status::SavingCredentials;
+            self.transcript_scroll.scroll_to_end();
+            let _ = tx.send(UserCommand::LoginProvider { provider, key });
+            return;
+        }
+        if trimmed == "/login" || trimmed.starts_with("/login ") {
+            let requested = trimmed
+                .strip_prefix("/login")
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_ascii_lowercase);
+            let Some(provider) = requested else {
+                self.entries.push(Entry::Info(
+                    "用法：/login minimax 或 /login 9router，然后在输入框中粘贴 API Key。\nAPI Key 将以掩码显示，不会写入会话历史。".into(),
+                ));
+                self.transcript_scroll.scroll_to_end();
+                return;
+            };
+            if !matches!(provider.as_str(), "minimax" | "9router") {
+                self.entries.push(Entry::Error(
+                    "不支持的 provider，可选：minimax、9router".into(),
+                ));
+                self.transcript_scroll.scroll_to_end();
+                return;
+            }
+            self.input.clear();
+            self.cursor = 0;
+            self.login_provider = Some(provider.clone());
+            self.status = Status::EnteringApiKey;
+            self.entries.push(Entry::Info(format!(
+                "正在登录 {provider}，请在下方输入 API Key（输入内容会被掩码）。"
+            )));
+            self.transcript_scroll.scroll_to_end();
+            return;
+        }
+        if trimmed == "/providers" {
+            let text = std::mem::take(&mut self.input);
+            self.cursor = 0;
+            self.detach_history();
+            self.entries.push(Entry::User(text));
+            let available = self
+                .providers
+                .iter()
+                .map(|name| {
+                    if name == &self.provider {
+                        format!("• {name}（当前）")
+                    } else {
+                        format!("• {name}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.entries.push(Entry::Info(format!(
+                "当前 provider: {}\n当前模型: {}\n\n可用 provider:\n{}",
+                self.provider, self.model, available
+            )));
+            self.transcript_scroll.scroll_to_end();
+            return;
+        }
+        if trimmed == "/provider" || trimmed.starts_with("/provider ") {
+            let requested = trimmed
+                .strip_prefix("/provider")
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned);
+            let text = std::mem::take(&mut self.input);
+            self.cursor = 0;
+            self.detach_history();
+            self.entries.push(Entry::User(text));
+            self.busy = true;
+            self.status = Status::SwitchingProvider;
+            self.transcript_scroll.scroll_to_end();
+            let _ = tx.send(UserCommand::SwitchProvider(requested));
+            return;
+        }
         if trimmed == "/cache" || trimmed == "/stats" {
             let text = std::mem::take(&mut self.input);
             self.cursor = 0;
@@ -373,6 +484,14 @@ impl App {
         self.detach_history();
         self.input.insert_str(self.cursor, text);
         self.cursor += text.len();
+    }
+
+    pub fn cancel_login(&mut self) {
+        self.login_provider = None;
+        self.input.clear();
+        self.cursor = 0;
+        self.detach_history();
+        self.status = Status::Idle;
     }
 }
 

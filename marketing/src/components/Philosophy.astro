@@ -1,0 +1,84 @@
+---
+import { Hammer, Layers, Cpu, ShieldAlert, Zap } from 'lucide-astro';
+
+const principles = [
+  {
+    icon: Layers,
+    title: "拒绝框架绑架，依赖极小化",
+    subtitle: "Native & Minimal",
+    desc: "内部无重型 LLM SDK 或多层 Agent 封装。直接基于 reqwest + tokio 驱动 OpenAI 兼容 SSE 流，状态到渲染无黑盒中间件。",
+    tag: "0 运行时框架",
+    accent: "#6EBEB4",
+  },
+  {
+    icon: Hammer,
+    title: "四个原子工具，严谨闭环",
+    subtitle: "Focused Primitives",
+    desc: "拒绝琐碎低效的编排工具。只保留 read、write、edit、bash。edit 强制精确文本唯一匹配，bash 严控超时与有界日志收集。",
+    tag: "4 核心操作",
+    accent: "#3B82F6",
+  },
+  {
+    icon: ShieldAlert,
+    title: "诚实界定权限，拒绝虚假沙箱",
+    subtitle: "Honest Security",
+    desc: "bash 拥有当前完整用户权限。读取凭证后立即从当前子进程环境中擦除 API Key，严防脚本探测泄露。",
+    tag: "0600 凭证隔离",
+    accent: "#F59E0B",
+  },
+  {
+    icon: Zap,
+    title: "多轮持久化，长对话自动压缩",
+    subtitle: "State & Resilience",
+    desc: "JSONL 格式纯追加持久化，支持工作区断点续接。上下文逼近 token 上限时自动向模型发起增量摘要压缩，长跑不中断。",
+    tag: "JSONL 增量持久化",
+    accent: "#10B981",
+  }
+];
+---
+
+<section id="philosophy" class="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-white/5">
+  <div class="text-center mb-16">
+    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] text-xs font-mono font-medium mb-3 border border-[#6EBEB4]/20">
+      <Cpu class="w-3.5 h-3.5" />
+      <span>构建理念 (Philosophy)</span>
+    </div>
+    <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-4">
+      极简原则：能删掉的抽象才是好设计
+    </h2>
+    <p class="text-gray-400 text-base sm:text-lg max-w-2xl mx-auto font-normal">
+      代码越少，隐患越少。我们剥除一切浮夸包装，回归终端编码的原子本质。
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    {principles.map((item) => {
+      const IconComponent = item.icon;
+      return (
+        <div class="glass-card rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between group hover:border-[#6EBEB4]/40 transition-all">
+          <div>
+            <div class="flex items-center justify-between mb-5">
+              <div class="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white group-hover:text-[#6EBEB4] transition-colors">
+                <IconComponent class="w-5 h-5" />
+              </div>
+              <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-white/5 border border-white/10 text-gray-400">
+                {item.tag}
+              </span>
+            </div>
+            <div class="text-xs font-mono text-[#6EBEB4] mb-1">{item.subtitle}</div>
+            <h3 class="text-lg font-bold text-white mb-3 tracking-tight">
+              {item.title}
+            </h3>
+            <p class="text-gray-400 text-xs sm:text-sm leading-relaxed mb-4">
+              {item.desc}
+            </p>
+          </div>
+          <div class="pt-4 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-gray-500">
+            <span>Verified in Rust</span>
+            <span class="text-[#6EBEB4]">✓</span>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</section>

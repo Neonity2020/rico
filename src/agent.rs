@@ -3,13 +3,14 @@ use std::{env, path::PathBuf};
 use anyhow::{Context, Result};
 
 use crate::{
+    auth::{auth_path, AuthStore},
     provider::{Message, OpenAiProvider, TokenUsage},
     session::{CacheStats, SessionStore},
     tools::ToolRegistry,
 };
 
 const SYSTEM_PROMPT: &str = r#"你是一个最小但可靠的 coding agent。你的工作目录就是项目根目录。
-先检查相关文件，再做修改；修改后运行合适的检查或测试。优先使用 read/edit/write 操作文件，使用 bash 执行命令、搜索和必要的网络请求。
+先检查相关文件，再做修改；修改后运行合适的检查或测试。优先使用 read/edit/write 操作文件，使用 web_search 进行联网信息检索（基于 Exa），使用 bash 执行命令、本地搜索和必要的构建测试。
 工具失败时，阅读错误并尝试安全的替代方案。完成后简洁说明改了什么以及验证结果。"#;
 
 /// Hook events emitted by [`Agent`] during a turn. The TUI subscribes to these
@@ -19,17 +20,19 @@ pub enum AgentEvent {
     Delta(String),
     ToolStart { name: String, args: String },
     ToolResult { output: String },
-    Step { current: usize, total: usize },
+    Step { current: usize, total: Option<usize> },
     Compacting,
     Complete,
     Error(String),
     Usage(TokenUsage),
+    ProviderChanged { provider: String, model: String },
 }
 
 pub struct Agent {
-    provider: OpenAiProvider,
+    providers: Vec<OpenAiProvider>,
+    active_provider: Option<usize>,
     tools: ToolRegistry,
-    max_steps: usize,
+    max_steps: Option<usize>,
     messages: Vec<Message>,
     session: SessionStore,
     compact_threshold: usize,
@@ -38,12 +41,17 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(
-        provider: OpenAiProvider,
+    pub fn new_with_providers(
+        providers: Vec<OpenAiProvider>,
+        active_provider: Option<usize>,
         workspace: PathBuf,
-        max_steps: usize,
+        max_steps: Option<usize>,
         resume: bool,
+        exa_api_key: Option<String>,
     ) -> Result<Self> {
+        if active_provider.is_some_and(|index| index >= providers.len()) {
+            anyhow::bail!("当前 provider 索引无效");
+        }
         let system = Message::text("system", SYSTEM_PROMPT);
         let (mut session, mut messages) = SessionStore::open(&workspace, resume, system.clone())?;
         if messages.is_empty() {
@@ -51,8 +59,9 @@ impl Agent {
             session.append_message(&system)?;
         }
         Ok(Self {
-            provider,
-            tools: ToolRegistry::coding_tools(workspace),
+            providers,
+            active_provider,
+            tools: ToolRegistry::coding_tools(workspace, exa_api_key),
             max_steps,
             messages,
             session,
@@ -63,10 +72,15 @@ impl Agent {
     }
 
     #[cfg(test)]
-    fn new_ephemeral(provider: OpenAiProvider, workspace: PathBuf, max_steps: usize) -> Self {
+    fn new_ephemeral(
+        provider: OpenAiProvider,
+        workspace: PathBuf,
+        max_steps: Option<usize>,
+    ) -> Self {
         Self {
-            provider,
-            tools: ToolRegistry::coding_tools(workspace),
+            providers: vec![provider],
+            active_provider: Some(0),
+            tools: ToolRegistry::coding_tools(workspace, None),
             max_steps,
             messages: vec![Message::text("system", SYSTEM_PROMPT)],
             session: SessionStore::ephemeral(),
@@ -100,7 +114,92 @@ impl Agent {
     }
 
     pub fn model_name(&self) -> &str {
-        self.provider.model_name()
+        self.provider().map_or("未登录", OpenAiProvider::model_name)
+    }
+
+    pub fn provider_name(&self) -> &str {
+        self.provider().map_or("未登录", OpenAiProvider::name)
+    }
+
+    pub fn provider_names(&self) -> Vec<String> {
+        self.providers
+            .iter()
+            .map(|provider| provider.name().to_owned())
+            .collect()
+    }
+
+    pub fn switch_provider(&mut self, requested: Option<&str>) -> Result<(String, String)> {
+        let next = match requested {
+            Some(name) => self
+                .providers
+                .iter()
+                .position(|provider| provider.name().eq_ignore_ascii_case(name))
+                .with_context(|| format!("provider 未配置或不存在: {name}"))?,
+            None => {
+                if self.providers.is_empty() {
+                    anyhow::bail!(
+                        "尚未登录任何 provider，请先使用 /login minimax 或 /login 9router"
+                    );
+                }
+                self.active_provider
+                    .map_or(0, |index| (index + 1) % self.providers.len())
+            }
+        };
+        self.active_provider = Some(next);
+        Ok((
+            self.provider_name().to_owned(),
+            self.model_name().to_owned(),
+        ))
+    }
+
+    pub fn login_provider(&mut self, requested: &str, key: String) -> Result<(String, String)> {
+        let name = match requested.to_ascii_lowercase().as_str() {
+            "minimax" => "minimax",
+            "9router" | "router" => "9router",
+            _ => anyhow::bail!("不支持的 provider：{requested}（可选 minimax 或 9router）"),
+        };
+        let mut auth = AuthStore::load(auth_path()?)?;
+        auth.set_api_key(name.to_owned(), key.clone())?;
+
+        let (base_url, model) = match name {
+            "minimax" => (
+                env::var("MINIMAX_BASE_URL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "https://api.minimaxi.com/v1".into()),
+                env::var("MINIMAX_MODEL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "MiniMax-M3".into()),
+            ),
+            "9router" => (
+                env::var("ROUTER_BASE_URL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "http://localhost:20128/v1".into()),
+                env::var("ROUTER_MODEL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "kr/claude-sonnet-4.5".into()),
+            ),
+            _ => unreachable!(),
+        };
+        let provider = OpenAiProvider::named(name, key, base_url, model);
+        if let Some(index) = self
+            .providers
+            .iter()
+            .position(|existing| existing.name() == name)
+        {
+            self.providers[index] = provider;
+            self.active_provider = Some(index);
+        } else {
+            self.providers.push(provider);
+            self.active_provider = Some(self.providers.len() - 1);
+        }
+        Ok((
+            self.provider_name().to_owned(),
+            self.model_name().to_owned(),
+        ))
     }
 
     pub async fn run_turn(
@@ -112,16 +211,31 @@ impl Agent {
         let definitions = self.tools.definitions();
         self.push_message(Message::text("user", task))?;
 
-        for step in 1..=self.max_steps {
+        let mut step = 0;
+        loop {
+            step += 1;
+            if let Some(max) = self.max_steps {
+                if step > max {
+                    let err = anyhow::anyhow!("达到最大工具循环次数 {max}")
+                        .context("agent 未能在限制内完成任务");
+                    return Err(err);
+                }
+            }
+
             if self.event_sink.is_none() {
-                eprintln!("[agent {step}/{}] 正在思考…", self.max_steps);
+                if let Some(max) = self.max_steps {
+                    eprintln!("[agent {step}/{max}] 正在思考…");
+                } else {
+                    eprintln!("[agent 步骤 {step}] 正在思考…");
+                }
             }
             self.emit(AgentEvent::Step {
                 current: step,
                 total: self.max_steps,
             });
             let (assistant, usage) = self
-                .provider
+                .provider()
+                .ok_or_else(|| anyhow::anyhow!("尚未登录 provider，请先使用 /login 登录"))?
                 .chat_stream(&self.messages, &definitions, &mut on_text)
                 .await?;
             if let Some(usage_info) = usage {
@@ -158,10 +272,6 @@ impl Agent {
                 self.push_message(Message::tool(call.id, output))?;
             }
         }
-
-        let err = anyhow::anyhow!("达到最大工具循环次数 {}", self.max_steps)
-            .context("agent 未能在限制内完成任务");
-        Err(err)
     }
 
     fn push_message(&mut self, message: Message) -> Result<()> {
@@ -221,7 +331,12 @@ impl Agent {
             Message::text("user", history),
         ];
 
-        let summary = match self.provider.summarize(&request).await {
+        let summary = match self
+            .provider()
+            .ok_or_else(|| anyhow::anyhow!("尚未登录 provider，无法压缩上下文"))?
+            .summarize(&request)
+            .await
+        {
             Ok(summary) => summary,
             Err(error) => {
                 if self.event_sink.is_none() {
@@ -241,6 +356,11 @@ impl Agent {
         self.session
             .append_compaction(tokens_before, summary, &self.messages)?;
         Ok(())
+    }
+
+    fn provider(&self) -> Option<&OpenAiProvider> {
+        self.active_provider
+            .and_then(|index| self.providers.get(index))
     }
 }
 
@@ -301,7 +421,7 @@ mod tests {
             "http://localhost".to_owned(),
             "test-model".to_owned(),
         );
-        let mut agent = Agent::new_ephemeral(provider, PathBuf::from("."), 3);
+        let mut agent = Agent::new_ephemeral(provider, PathBuf::from("."), Some(3));
         agent.messages.push(Message::text("user", "hello"));
 
         agent.clear_history().unwrap();
@@ -315,5 +435,29 @@ mod tests {
         let short = vec![Message::text("user", "hi")];
         let long = vec![Message::text("user", "x".repeat(10_000))];
         assert!(estimate_tokens(&long) > estimate_tokens(&short));
+    }
+
+    #[test]
+    fn switches_between_configured_providers() {
+        let minimax = OpenAiProvider::named(
+            "minimax",
+            "minimax-key".into(),
+            "https://api.minimaxi.com/v1".into(),
+            "MiniMax-M3".into(),
+        );
+        let router = OpenAiProvider::named(
+            "9router",
+            "router-key".into(),
+            "http://localhost:20128/v1".into(),
+            "kr/claude-sonnet-4.5".into(),
+        );
+        let mut agent = Agent::new_ephemeral(minimax, PathBuf::from("."), Some(3));
+        agent.providers.push(router);
+
+        let selected = agent.switch_provider(None).unwrap();
+        assert_eq!(selected, ("9router".into(), "kr/claude-sonnet-4.5".into()));
+
+        let selected = agent.switch_provider(Some("MINIMAX")).unwrap();
+        assert_eq!(selected, ("minimax".into(), "MiniMax-M3".into()));
     }
 }

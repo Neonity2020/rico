@@ -66,8 +66,8 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
         // Collect a table: header line + separator + body rows.
         if is_table_row(raw) && i + 1 < lines.len() && is_table_separator(lines[i + 1].as_str()) {
             let header = parse_row(raw);
-            i += 1; // skip separator
-            let aligns = parse_alignments(&lines[i - 1]);
+            let aligns = parse_alignments(&lines[i + 1]);
+            i += 2; // skip header and separator
             let mut rows: Vec<Vec<String>> = vec![header];
             while i < lines.len() && is_table_row(lines[i].as_str()) {
                 rows.push(parse_row(&lines[i]));
@@ -88,6 +88,49 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
             continue;
         }
 
+        let stripped = raw.trim();
+        if let Some(rest) = stripped.strip_prefix("### ") {
+            out.push(Line::raw(""));
+            let mut rendered = render_paragraph(&[rest.to_string()], width);
+            for line in &mut rendered {
+                for span in &mut line.spans {
+                    span.style = span.style.add_modifier(ratatui::style::Modifier::BOLD);
+                }
+            }
+            out.extend(rendered);
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = stripped.strip_prefix("## ") {
+            out.push(Line::raw(""));
+            let mut rendered = render_paragraph(&[rest.to_string()], width);
+            for line in &mut rendered {
+                for span in &mut line.spans {
+                    span.style = span
+                        .style
+                        .add_modifier(ratatui::style::Modifier::BOLD)
+                        .fg(ratatui::style::Color::Cyan);
+                }
+            }
+            out.extend(rendered);
+            i += 1;
+            continue;
+        }
+        if let Some(rest) = stripped.strip_prefix("# ") {
+            out.push(Line::raw(""));
+            let mut rendered = render_paragraph(&[rest.to_string()], width);
+            for line in &mut rendered {
+                for span in &mut line.spans {
+                    span.style = span
+                        .style
+                        .add_modifier(ratatui::style::Modifier::BOLD | ratatui::style::Modifier::UNDERLINED);
+                }
+            }
+            out.extend(rendered);
+            i += 1;
+            continue;
+        }
+
         // Plain paragraph(s). Collect contiguous non-empty lines into one block.
         let mut paragraph = Vec::new();
         while i < lines.len() {
@@ -99,6 +142,13 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
                 break;
             }
             if is_horizontal_rule(current) {
+                break;
+            }
+            let cur_trim = current.trim_start();
+            if cur_trim.starts_with("# ")
+                || cur_trim.starts_with("## ")
+                || cur_trim.starts_with("### ")
+            {
                 break;
             }
             if is_table_row(current)
@@ -198,6 +248,19 @@ mod tests {
                     .add_modifier
                     .contains(Modifier::BOLD | Modifier::ITALIC)
         }));
+    }
+
+    #[test]
+    fn renders_headings_with_styles() {
+        let md = "### 3. 处理多行文本建议\n普通段落";
+        let lines = render(md, 80);
+        let flat = flatten(&lines);
+        assert!(flat.contains("3. 处理多行文本建议"));
+        assert!(!flat.contains("###"));
+        let has_bold = lines.iter().flat_map(|l| &l.spans).any(|s| {
+            s.content.contains("处理多行文本建议") && s.style.add_modifier.contains(Modifier::BOLD)
+        });
+        assert!(has_bold, "heading must be styled with BOLD modifier");
     }
 
     #[test]

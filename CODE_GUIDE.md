@@ -1,6 +1,6 @@
 # rico 代码导读
 
-`rico` 是一个最小化的 Rust coding agent。它通过 OpenAI 兼容的 Chat Completions 流式接口（默认指向 MiniMax M3）驱动模型，并提供四个面向编程的核心工具（`read`, `write`, `edit`, `bash`），支持多轮会话持久化与长对话上下文自动压缩。
+`rico` 是一个最小化的 Rust coding agent。它通过 MiniMax 或 9Router 的 OpenAI 兼容 Chat Completions 流式接口驱动模型，可在运行时切换 provider，并提供四个面向编程的核心工具（`read`, `write`, `edit`, `bash`），支持多轮会话持久化与长对话上下文自动压缩。
 
 默认启动一个 ratatui TUI（终端 UI），同时保留传统的 stdin/stdout REPL 作为 `--cli` 兼容入口。
 
@@ -18,6 +18,7 @@
 ├── CODE_GUIDE.md       # 架构导读与安全设计（本文档）
 └── src
     ├── main.rs         # 入口：CLI 解析 (--tui/--cli)、配置加载、CLI REPL 循环驱动
+    ├── auth.rs         # Pi 风格 auth.json：API Key 读取、导入与安全原子写入
     ├── agent.rs        # Agent 核心：提示词、工具调度循环、上下文自动压缩、事件通道
     ├── provider.rs     # Provider：OpenAI 兼容 SSE 流式请求与 tool_calls、Token Usage 解析
     ├── session.rs      # 会话存储：基于 JSONL 的追加存储、缓存命中统计与会话恢复
@@ -53,8 +54,11 @@
    - 若指定 `RICO_CONFIG`，仅从该文件补充缺失配置。
    - 否则依次从当前目录的 `.env.local`、`.env` 和用户级 `~/.config/rico/config.env` 补充缺失配置。
 3. **敏感凭证防泄漏**：
-   - 验证 `OPENAI_API_KEY` 有效性（拒绝 `your-` 占位符）。
-   - **`env::remove_var("OPENAI_API_KEY")`**：读取后立即从当前进程环境变量中抹除，防止随后续的 `bash` 子进程环境暴露给未知命令。
+   - 优先从 `~/.config/rico/auth.json` 读取 Pi 风格 API Key credential；环境变量仅作为兼容回退和 `rico auth import` 的迁移源。
+   - 分别读取 MiniMax 与 9Router 配置，未配置 API Key 的 provider 不会加入运行时列表；旧版 `OPENAI_*` 作为 MiniMax 配置的回退。
+   - `RICO_PROVIDER` 可指定启动 provider；运行中通过 `/provider` 切换，现有会话上下文保持不变。
+   - TUI 的 `/login minimax` 与 `/login 9router` 使用掩码输入，写入 `auth.json` 后立即启用 provider；API Key 不进入会话历史。
+   - `auth.json` 新文件使用 `0600` 权限和原子替换写入；环境变量密钥读取后立即从当前进程中移除，防止随后的 `bash` 子进程环境暴露给未知命令。
 4. **运行模式分派**：
    - `--cli`：调用 `run_cli(agent, initial_task)`，维持原 stdin/stdout REPL。
    - 默认 / `--tui`：调用 `tui::run(agent)`，进入全屏 TUI。
@@ -123,6 +127,7 @@ pub enum AgentEvent {
     Compacting,
     Complete,
     Error(String),
+    ProviderChanged { provider: String, model: String },
 }
 ```
 
@@ -158,7 +163,7 @@ pub enum AgentEvent {
 
 ## 6. 工具箱与信任边界（`src/tools.rs`）
 
-rico 默认注册四个面向编码的工具：
+rico 默认注册五个面向编码与研发的内置工具：
 
 | 工具名 | 核心功能 | 安全边界与特性 |
 | :--- | :--- | :--- |
@@ -166,6 +171,7 @@ rico 默认注册四个面向编码的工具：
 | **`write`** | 创建或覆盖工作区文件 | 自动递归创建父目录 |
 | **`edit`** | 精确替换文本 | 要求 `old_text` 在目标文件中恰好出现 1 次，杜绝歧义替换 |
 | **`bash`** | 执行 Shell 命令与测试 | 超时控制（1~600 秒）；Unix 下创建进程组，超时彻底清理进程树 |
+| **`web_search`** | 基于 Exa AI 引擎的网络检索 | 返回网页标题、URL 及 highlights 高亮摘要；API Key 从配置安全读取并在子进程中隐蔽 |
 
 ### 安全防护机制
 
@@ -173,7 +179,7 @@ rico 默认注册四个面向编码的工具：
    - 拒绝绝对路径、包含 `..` 的路径及 Windows 盘符。
    - 逐级检查路径各分量，拒绝任何符号链接（Symlink），防止指向外部敏感文件。
 2. **敏感凭据保护（`is_sensitive_path`）**：
-   - 拦截 `.env*`、`.aws`、`.ssh`、`id_rsa`、`id_ed25519`、`id_ecdsa`、`id_dsa`、`config.env`、`*.key`、`*.pem` 等凭据文件，防止文件工具意外泄露密钥。
+   - 拦截 `.env*`、`auth.json`、`.aws`、`.ssh`、`id_rsa`、`id_ed25519`、`id_ecdsa`、`id_dsa`、`config.env`、`*.key`、`*.pem` 等凭据文件，防止文件工具意外泄露密钥。
 3. **孤儿进程清理**：
    - `BashTool` 在 Unix 系统下设置 `command.process_group(0)`。超时触发时，向整个进程组发送 `SIGKILL`，杜绝后台死循环脚本或失控子进程残留。
 4. **有界输出采集（`read_bounded_tail` + `truncate_tail`）**：
@@ -215,7 +221,7 @@ main 启动
 
 ```text
 ┌──────────────────────────────────────────┐
-│  rico · MiniMax-M3 · idle                │  ← Header (3 行)
+│  rico · kr/claude-sonnet-4.5 · idle      │  ← Header (3 行)
 ├──────────────────────────────────────────┤
 │  你> ...                                 │
 │  助手> ...                               │  ← History (自适应)
@@ -245,8 +251,8 @@ main 启动
 ```bash
 cargo check                        # 验证编译
 cargo clippy --all-targets         # 代码质量检查 (当前零警告)
-cargo test                         # 运行单元测试套件 (17 个测试)
+cargo test                         # 运行单元测试套件
 cargo run -- --help                # 验证 CLI 帮助
-cargo run -- --cli                 # CLI 模式交互 (需要 OPENAI_API_KEY)
+cargo run -- --cli                 # CLI 模式交互 (至少配置一个 provider API Key)
 cargo run -- --tui                 # TUI 模式交互 (默认)
 ```

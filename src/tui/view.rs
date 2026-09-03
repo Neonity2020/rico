@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -25,7 +25,8 @@ pub const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', 
 
 pub fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let area = frame.area();
-    let editor_rows = editor_rows(&app.input, area.width.max(1) as usize)
+    let wrap_width = area.width.saturating_sub(1).max(1) as usize;
+    let editor_rows = editor_rows(&app.input, wrap_width)
         .clamp(1, MAX_EDITOR_ROWS as usize) as u16;
     let layout = Layout::default()
         .direction(Direction::Vertical)
@@ -46,8 +47,13 @@ pub fn render_conversation(frame: &mut ratatui::Frame<'_>, app: &mut App, area: 
     let width = area.width.max(1) as usize;
     let mut lines = Vec::new();
     if app.entries.is_empty() && app.streaming.is_empty() {
+        let model = if app.provider.is_empty() {
+            app.model.clone()
+        } else {
+            format!("{} · {}", app.provider, app.model)
+        };
         lines.extend(render_welcome(
-            &app.model,
+            &model,
             PHILOSOPHIES[app.philosophy_index],
             width,
         ));
@@ -77,10 +83,7 @@ pub fn render_conversation(frame: &mut ratatui::Frame<'_>, app: &mut App, area: 
         .skip(start)
         .take(viewport)
         .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(Text::from(visible)).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(Text::from(visible)), area);
     render_selection(frame, app);
 }
 
@@ -227,17 +230,30 @@ pub fn render_status(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 pub fn render_entry(entry: &Entry, width: usize) -> Vec<Line<'static>> {
     match entry {
         Entry::User(text) => {
-            let inner = width.saturating_sub(4).max(1);
+            const MAX_BUBBLE_WIDTH: usize = 110;
+            let available = width.saturating_sub(4).max(1);
+            let target_width = available.min(MAX_BUBBLE_WIDTH);
+            let text_lines: Vec<String> = text
+                .lines()
+                .flat_map(|line| wrap_text(line, target_width))
+                .collect();
+            let max_line_w = text_lines
+                .iter()
+                .map(|l| UnicodeWidthStr::width(l.as_str()))
+                .max()
+                .unwrap_or(0);
+            let inner = max_line_w.max(1);
+            let bubble_width = inner + 4;
             let background = Style::default().bg(USER_BG).fg(Color::White);
-            let mut lines = vec![Line::from(Span::styled(" ".repeat(width), background))];
-            for text_line in text.lines().flat_map(|line| wrap_text(line, inner)) {
+            let mut lines = vec![Line::from(Span::styled(" ".repeat(bubble_width), background))];
+            for text_line in text_lines {
                 let padding = inner.saturating_sub(UnicodeWidthStr::width(text_line.as_str()));
                 lines.push(Line::from(Span::styled(
                     format!("  {text_line}{}  ", " ".repeat(padding)),
                     background,
                 )));
             }
-            lines.push(Line::from(Span::styled(" ".repeat(width), background)));
+            lines.push(Line::from(Span::styled(" ".repeat(bubble_width), background)));
             lines
         }
         Entry::Assistant(text) => {
@@ -322,7 +338,11 @@ pub fn render_editor(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     } else {
         ""
     };
-    let content = if placeholder.is_empty() {
+    let masked_input;
+    let content = if app.login_provider.is_some() {
+        masked_input = "•".repeat(app.input.chars().count());
+        masked_input.as_str()
+    } else if placeholder.is_empty() {
         app.input.as_str()
     } else {
         placeholder
@@ -332,15 +352,17 @@ pub fn render_editor(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     } else {
         Style::default().fg(MUTED)
     };
-    let paragraph = Paragraph::new(content)
+    let width = area.width.max(1) as usize;
+    let wrap_width = width.saturating_sub(1).max(1);
+    let wrapped_lines = wrap_text(content, wrap_width);
+    let text_widget = Text::from(wrapped_lines.into_iter().map(Line::raw).collect::<Vec<_>>());
+    let paragraph = Paragraph::new(text_widget)
         .style(style)
-        .block(block)
-        .wrap(Wrap { trim: false });
+        .block(block);
     frame.render_widget(paragraph, area);
 
     if !app.busy {
-        let width = area.width.max(1) as usize;
-        let (column, row) = cursor_position(&app.input, app.cursor, width.saturating_sub(1));
+        let (column, row) = cursor_position(&app.input, app.cursor, wrap_width);
         let x = area.x + column as u16;
         let y = area.y + 1 + row as u16;
         if x < area.right() && y < area.bottom() {
@@ -358,7 +380,10 @@ pub fn render_footer(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .unwrap_or("临时会话");
     let step = app
         .step
-        .map(|(current, total)| format!(" · 步骤 {current}/{total}"))
+        .map(|(current, total)| match total {
+            Some(total) => format!(" · 步骤 {current}/{total}"),
+            None => format!(" · 步骤 {current}"),
+        })
         .unwrap_or_default();
     let cache_info = if app.cache_stats.requests_count > 0 {
         let stats = &app.cache_stats;
@@ -381,7 +406,12 @@ pub fn render_footer(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     } else {
         String::new()
     };
-    let left = format!("{} · {session}", app.cwd);
+    let provider = if app.provider.is_empty() {
+        app.model.clone()
+    } else {
+        format!("{} · {}", app.provider, app.model)
+    };
+    let left = format!("{} · {session} · {provider}", app.cwd);
     let right = format!(
         "约 {} 词元{cache_info}{step} · {}",
         app.tokens,
@@ -391,7 +421,7 @@ pub fn render_footer(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let hints = if app.busy {
         "Ctrl-C 退出 · PgUp/PgDn 滚动"
     } else {
-        "Enter 发送 · Shift-Enter 换行 · /cache 统计 · ↑/↓ 历史 · Ctrl-L 清空 · Ctrl-D 退出"
+        "Enter 发送 · Shift-Enter 换行 · /login 登录 · /provider 切换 · /cache 统计 · ↑/↓ 历史 · Ctrl-L 清空 · Ctrl-D 退出"
     };
     frame.render_widget(
         Paragraph::new(vec![
