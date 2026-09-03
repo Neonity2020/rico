@@ -6,19 +6,34 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 fn is_closing_punct(ch: char) -> bool {
     matches!(
         ch,
-        '，' | '。' | '！' | '？' | '：' | '；' | '、'
-            | '）' | '】' | '》' | '”' | '’'
-            | ',' | '.' | '!' | '?' | ':' | ';'
-            | ')' | ']' | '}' | '>' | '\'' | '"'
+        '，' | '。'
+            | '！'
+            | '？'
+            | '：'
+            | '；'
+            | '、'
+            | '）'
+            | '】'
+            | '》'
+            | '”'
+            | '’'
+            | ','
+            | '.'
+            | '!'
+            | '?'
+            | ':'
+            | ';'
+            | ')'
+            | ']'
+            | '}'
+            | '>'
+            | '\''
+            | '"'
     )
 }
 
 fn is_opening_punct(ch: char) -> bool {
-    matches!(
-        ch,
-        '（' | '【' | '《' | '“' | '‘'
-            | '(' | '[' | '{' | '<'
-    )
+    matches!(ch, '（' | '【' | '《' | '“' | '‘' | '(' | '[' | '{' | '<')
 }
 
 fn is_cjk_char(ch: char) -> bool {
@@ -174,7 +189,8 @@ fn wrap_lines<'a>(text: &'a str, max_width: usize) -> Vec<VisualLine<'a>> {
                     if is_closing_punct(first_ch) && !curr.segments.is_empty() {
                         if let Some(prev) = curr.pop() {
                             let next_start = curr.end_byte;
-                            visual_lines.push(std::mem::replace(&mut curr, VisualLine::new(next_start)));
+                            visual_lines
+                                .push(std::mem::replace(&mut curr, VisualLine::new(next_start)));
                             curr.push(prev);
                             curr.push(token);
                             is_wrapped_continuation = true;
@@ -184,7 +200,8 @@ fn wrap_lines<'a>(text: &'a str, max_width: usize) -> Vec<VisualLine<'a>> {
 
                     if !curr.segments.is_empty() {
                         let next_start = curr.end_byte;
-                        visual_lines.push(std::mem::replace(&mut curr, VisualLine::new(next_start)));
+                        visual_lines
+                            .push(std::mem::replace(&mut curr, VisualLine::new(next_start)));
                         is_wrapped_continuation = true;
                     }
 
@@ -204,7 +221,10 @@ fn wrap_lines<'a>(text: &'a str, max_width: usize) -> Vec<VisualLine<'a>> {
                                     .unwrap_or(0);
                             if curr.width + gw > max_width && !curr.segments.is_empty() {
                                 let next_start = curr.end_byte;
-                                visual_lines.push(std::mem::replace(&mut curr, VisualLine::new(next_start)));
+                                visual_lines.push(std::mem::replace(
+                                    &mut curr,
+                                    VisualLine::new(next_start),
+                                ));
                                 is_wrapped_continuation = true;
                             }
                             curr.push(Token {
@@ -256,7 +276,9 @@ pub fn cursor_position(text: &str, cursor: usize, width: usize) -> (usize, usize
 
     for (row, line) in lines.iter().enumerate() {
         let is_last = row == lines.len() - 1;
-        if cursor >= line.start_byte && (cursor < line.end_byte || (cursor == line.end_byte && is_last)) {
+        if cursor >= line.start_byte
+            && (cursor < line.end_byte || (cursor == line.end_byte && is_last))
+        {
             let mut col = 0;
             for seg in &line.segments {
                 let seg_end = seg.byte_offset + seg.text.len();

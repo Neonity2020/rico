@@ -21,6 +21,7 @@ const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 const MAX_OUTPUT_LINES: usize = 2_000;
 const DEFAULT_BASH_TIMEOUT: u64 = 120;
 const MAX_BASH_TIMEOUT: u64 = 600;
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
 
@@ -322,30 +323,47 @@ impl Tool for BashTool {
             }
 
             let mut child = command.spawn().context("无法执行 shell")?;
-            let child_id = child.id();
+            #[cfg(unix)]
+            let mut process_group = ProcessGroupGuard::new(child.id());
             let stdout = child.stdout.take().context("无法捕获命令标准输出")?;
             let stderr = child.stderr.take().context("无法捕获命令错误输出")?;
-            let stdout_task = tokio::spawn(read_bounded_tail(stdout));
-            let stderr_task = tokio::spawn(read_bounded_tail(stderr));
+            let mut stdout_task = tokio::spawn(read_bounded_tail(stdout));
+            let mut stderr_task = tokio::spawn(read_bounded_tail(stderr));
 
             let status = match timeout(Duration::from_secs(timeout_seconds), child.wait()).await {
                 Ok(res) => res.context("等待命令结束失败")?,
                 Err(_) => {
                     #[cfg(unix)]
-                    if let Some(pid) = child_id {
-                        let _ = std::process::Command::new("kill")
-                            .args(["-KILL", &format!("-{pid}")])
-                            .output();
-                    }
+                    process_group.kill();
                     let _ = child.kill().await;
                     let _ = child.wait().await;
-                    let _ = stdout_task.await;
-                    let _ = stderr_task.await;
+                    let _ = timeout(
+                        OUTPUT_DRAIN_TIMEOUT,
+                        collect_process_output(&mut stdout_task, &mut stderr_task),
+                    )
+                    .await;
+                    stdout_task.abort();
+                    stderr_task.abort();
                     anyhow::bail!("命令超过 {timeout_seconds} 秒，已终止");
                 }
             };
-            let stdout = stdout_task.await.context("标准输出读取任务失败")??;
-            let stderr = stderr_task.await.context("错误输出读取任务失败")??;
+            let (stdout, stderr) = match timeout(
+                OUTPUT_DRAIN_TIMEOUT,
+                collect_process_output(&mut stdout_task, &mut stderr_task),
+            )
+            .await
+            {
+                Ok(output) => output?,
+                Err(_) => {
+                    #[cfg(unix)]
+                    process_group.kill();
+                    stdout_task.abort();
+                    stderr_task.abort();
+                    anyhow::bail!("命令已退出，但后台进程未关闭输出管道，已终止进程组");
+                }
+            };
+            #[cfg(unix)]
+            process_group.disarm();
             let combined = format!(
                 "{}{}{}",
                 String::from_utf8_lossy(&stdout),
@@ -371,6 +389,51 @@ impl Tool for BashTool {
                 )
             }
         })
+    }
+}
+
+async fn collect_process_output(
+    stdout_task: &mut tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+    stderr_task: &mut tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let stdout = stdout_task.await.context("标准输出读取任务失败")??;
+    let stderr = stderr_task.await.context("错误输出读取任务失败")??;
+    Ok((stdout, stderr))
+}
+
+#[cfg(unix)]
+fn kill_process_group(child_id: Option<u32>) {
+    if let Some(pid) = child_id {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &format!("-{pid}")])
+            .output();
+    }
+}
+
+#[cfg(unix)]
+struct ProcessGroupGuard {
+    child_id: Option<u32>,
+}
+
+#[cfg(unix)]
+impl ProcessGroupGuard {
+    fn new(child_id: Option<u32>) -> Self {
+        Self { child_id }
+    }
+
+    fn kill(&mut self) {
+        kill_process_group(self.child_id.take());
+    }
+
+    fn disarm(&mut self) {
+        self.child_id = None;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -698,6 +761,56 @@ mod tests {
             .execute("bash", r#"{"command":"printf rico"}"#)
             .await;
         assert_eq!(result, "rico");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bash_does_not_hang_when_background_process_holds_output_pipe() {
+        let root = temp_workspace();
+        let tool = BashTool::new(root.clone());
+        let result = tool
+            .execute(r#"{"command":"(sleep 30) & exit 0","timeout":5}"#)
+            .await;
+        assert!(result.unwrap_err().to_string().contains("未关闭输出管道"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_bash_kills_its_process_group() {
+        let root = temp_workspace();
+        let pid_path = root.join("shell.pid");
+        let tool = BashTool::new(root.clone());
+        let task = tokio::spawn(async move {
+            tool.execute(r#"{"command":"echo $$ > shell.pid; sleep 30","timeout":60}"#)
+                .await
+        });
+
+        for _ in 0..100 {
+            if pid_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let pid = fs::read_to_string(&pid_path)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        task.abort();
+        let _ = task.await;
+
+        let process_group_alive = std::process::Command::new("kill")
+            .args(["-0", &format!("-{pid}")])
+            .output()
+            .unwrap()
+            .status
+            .success();
+        if process_group_alive {
+            kill_process_group(Some(pid));
+        }
+        assert!(!process_group_alive, "取消后 shell 进程组仍然存活");
         let _ = fs::remove_dir_all(root);
     }
 

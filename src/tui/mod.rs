@@ -24,15 +24,20 @@ use crossterm::{
 use futures_util::StreamExt;
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use scopeguard::defer;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::{
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    time::{interval, MissedTickBehavior},
+};
 
-use crate::agent::{Agent, AgentEvent};
+use crate::agent::{Agent, AgentEvent, TurnCancelled};
 
 use self::{
     app::{App, UserCommand},
     event::handle_event,
     view::render,
 };
+
+const FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 pub async fn run(mut agent: Agent) -> Result<()> {
     let provider = agent.provider_name().to_owned();
@@ -41,6 +46,7 @@ pub async fn run(mut agent: Agent) -> Result<()> {
     let session_path = agent.session_path().map(PathBuf::from);
     let initial_tokens = agent.estimated_tokens();
     let initial_cache_stats = agent.cache_stats();
+    let cancellation_handle = agent.cancellation_handle();
     let cwd = app::display_cwd()?;
     let initial_tty_size = stty_terminal_size();
 
@@ -68,46 +74,66 @@ pub async fn run(mut agent: Agent) -> Result<()> {
     app.providers = providers;
     app.tokens = initial_tokens;
     app.cache_stats = initial_cache_stats;
+    app.set_cancellation_handle(cancellation_handle);
     let mut input_events = EventStream::new();
+    let mut frame_clock = interval(FRAME_INTERVAL);
+    frame_clock.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut redraw = true;
 
-    loop {
-        while let Ok(event) = event_rx.try_recv() {
-            app.apply_agent_event(event);
-        }
-        app.tick = app.tick.wrapping_add(1);
-
-        // Some embedded terminals update the PTY size without delivering a
-        // reliable SIGWINCH/Resize event. Reconcile with `stty size` once per
-        // second so the alternate-screen viewport cannot remain letterboxed.
-        if app.tick.is_multiple_of(20) {
-            if let Some((width, height)) = stty_terminal_size() {
-                let size = terminal.size().context("读取终端画布失败")?;
-                if size.width != width || size.height != height {
-                    terminal
-                        .resize(Rect::new(0, 0, width, height))
-                        .context("同步终端画布失败")?;
-                    terminal.clear().context("重绘终端失败")?;
-                }
-            }
-        }
-
-        terminal.autoresize().context("调整终端画布失败")?;
-        terminal
-            .draw(|frame| render(frame, &mut app))
-            .context("渲染失败")?;
-
+    'ui: loop {
         tokio::select! {
             biased;
+            _ = frame_clock.tick() => {
+                app.tick = app.tick.wrapping_add(1);
+
+                // Some embedded terminals update the PTY size without delivering a
+                // reliable SIGWINCH/Resize event. Reconcile with `stty size` once per
+                // second so the alternate-screen viewport cannot remain letterboxed.
+                if app.tick.is_multiple_of(20) {
+                    if let Some((width, height)) = stty_terminal_size() {
+                        let size = terminal.size().context("读取终端画布失败")?;
+                        if size.width != width || size.height != height {
+                            terminal
+                                .resize(Rect::new(0, 0, width, height))
+                                .context("同步终端画布失败")?;
+                            terminal.clear().context("重绘终端失败")?;
+                            redraw = true;
+                        }
+                    }
+                }
+
+                if redraw || app.busy {
+                    terminal.autoresize().context("调整终端画布失败")?;
+                    terminal
+                        .draw(|frame| render(frame, &mut app))
+                        .context("渲染失败")?;
+                    redraw = false;
+                }
+            }
             event = input_events.next() => match event {
                 Some(Ok(Event::Resize(width, height))) => {
                     terminal.resize(Rect::new(0, 0, width, height)).context("调整终端画布失败")?;
                     terminal.clear().context("重绘终端失败")?;
+                    redraw = true;
                 }
-                Some(Ok(event)) => handle_event(&mut app, event, &cmd_tx)?,
+                Some(Ok(event)) => {
+                    handle_event(&mut app, event, &cmd_tx)?;
+                    redraw = true;
+                }
                 Some(Err(error)) => return Err(error).context("读取终端事件失败"),
-                None => break,
+                None => break 'ui,
             },
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            Some(event) = event_rx.recv() => {
+                app.apply_agent_event(event);
+                for _ in 1..256 {
+                    let Ok(event) = event_rx.try_recv() else {
+                        break;
+                    };
+                    app.apply_agent_event(event);
+                }
+                app.refresh_tokens();
+                redraw = true;
+            }
         }
 
         if app.should_quit {
@@ -134,7 +160,14 @@ async fn run_agent(
                     let _ = stream.send(AgentEvent::Delta(piece.to_owned()));
                 };
                 if let Err(error) = agent.run_turn(text, on_text).await {
-                    let _ = events.send(AgentEvent::Error(format!("{error:#}")));
+                    let event = if error.downcast_ref::<TurnCancelled>().is_some() {
+                        AgentEvent::Cancelled {
+                            cache_stats: agent.cache_stats(),
+                        }
+                    } else {
+                        AgentEvent::Error(format!("{error:#}"))
+                    };
+                    let _ = events.send(event);
                 }
             }
             UserCommand::SwitchProvider(requested) => {
@@ -332,6 +365,34 @@ mod tests {
     }
 
     #[test]
+    fn escape_cancels_a_busy_turn_without_exiting() {
+        let mut app = App::new("model".into(), None, "~".into());
+        app.busy = true;
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &channel(),
+        );
+
+        assert_eq!(app.status, Status::Cancelling);
+        assert!(app
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert!(!app.should_quit);
+
+        app.apply_agent_event(AgentEvent::Cancelled {
+            cache_stats: Default::default(),
+        });
+        app.input = "next task".into();
+        app.cursor = app.input.len();
+        app.submit(&channel());
+        assert!(!app
+            .cancel_requested
+            .load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
     fn thinking_blocks_are_not_rendered_as_assistant_text() {
         let text = "<think>private reasoning\nmore</think>\n你好";
         assert_eq!(visible_assistant_text(text), "你好");
@@ -348,6 +409,30 @@ mod tests {
         assert_eq!(terminal.size().unwrap(), Rect::new(0, 0, 120, 40).into());
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer.area, Rect::new(0, 0, 120, 40));
+    }
+
+    #[test]
+    fn conversation_render_cache_is_reused_until_content_changes() {
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new("model".into(), None, "~".into());
+        app.entries
+            .push(Entry::Assistant("# Heading\n\nbody".into()));
+        app.mark_transcript_changed();
+
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let cached_revision = app.transcript_cached_revision;
+        let cached_pointer = app.transcript_render_cache.as_ptr();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.transcript_cached_revision, cached_revision);
+        assert_eq!(app.transcript_render_cache.as_ptr(), cached_pointer);
+
+        app.apply_agent_event(AgentEvent::Delta("new".into()));
+        assert_ne!(app.transcript_cached_revision, app.transcript_revision);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_eq!(app.transcript_cached_revision, app.transcript_revision);
     }
 
     #[test]
@@ -431,6 +516,7 @@ mod tests {
         assert_eq!(Status::Thinking.label(), "正在思考…");
         assert_eq!(Status::RunningTool("bash".into()).label(), "正在运行 bash…");
         assert_eq!(Status::Compacting.label(), "正在压缩上下文…");
+        assert_eq!(Status::Cancelling.label(), "正在取消任务…");
     }
 
     #[test]

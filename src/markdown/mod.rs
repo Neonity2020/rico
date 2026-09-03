@@ -123,9 +123,9 @@ pub fn render(text: &str, width: usize) -> Vec<Line<'static>> {
             let mut rendered = render_paragraph(&[rest.to_string()], width);
             for line in &mut rendered {
                 for span in &mut line.spans {
-                    span.style = span
-                        .style
-                        .add_modifier(ratatui::style::Modifier::BOLD | ratatui::style::Modifier::UNDERLINED);
+                    span.style = span.style.add_modifier(
+                        ratatui::style::Modifier::BOLD | ratatui::style::Modifier::UNDERLINED,
+                    );
                 }
             }
             out.extend(rendered);

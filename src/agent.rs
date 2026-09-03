@@ -1,4 +1,12 @@
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    future::Future,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::{Context, Result};
 
@@ -18,15 +26,40 @@ const SYSTEM_PROMPT: &str = r#"你是一个最小但可靠的 coding agent。你
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Delta(String),
-    ToolStart { name: String, args: String },
-    ToolResult { output: String },
-    Step { current: usize, total: Option<usize> },
+    ToolStart {
+        name: String,
+        args: String,
+    },
+    ToolResult {
+        output: String,
+    },
+    Step {
+        current: usize,
+        total: Option<usize>,
+    },
     Compacting,
     Complete,
+    Cancelled {
+        cache_stats: CacheStats,
+    },
     Error(String),
     Usage(TokenUsage),
-    ProviderChanged { provider: String, model: String },
+    ProviderChanged {
+        provider: String,
+        model: String,
+    },
 }
+
+#[derive(Debug)]
+pub struct TurnCancelled;
+
+impl std::fmt::Display for TurnCancelled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("任务已取消")
+    }
+}
+
+impl std::error::Error for TurnCancelled {}
 
 pub struct Agent {
     providers: Vec<OpenAiProvider>,
@@ -38,6 +71,7 @@ pub struct Agent {
     compact_threshold: usize,
     keep_recent_tokens: usize,
     event_sink: Option<Box<dyn FnMut(AgentEvent) + Send>>,
+    cancel_requested: Arc<AtomicBool>,
 }
 
 impl Agent {
@@ -68,6 +102,7 @@ impl Agent {
             compact_threshold: env_usize("RICO_COMPACT_TOKENS", 200_000)?,
             keep_recent_tokens: env_usize("RICO_KEEP_RECENT_TOKENS", 20_000)?,
             event_sink: None,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -87,11 +122,16 @@ impl Agent {
             compact_threshold: 200_000,
             keep_recent_tokens: 20_000,
             event_sink: None,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn set_event_sink(&mut self, sink: Option<Box<dyn FnMut(AgentEvent) + Send>>) {
         self.event_sink = sink;
+    }
+
+    pub fn cancellation_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel_requested)
     }
 
     pub fn clear_history(&mut self) -> Result<()> {
@@ -207,12 +247,36 @@ impl Agent {
         task: String,
         mut on_text: impl FnMut(&str),
     ) -> Result<String> {
-        self.maybe_compact().await?;
+        let checkpoint_messages = self.messages.clone();
+        let checkpoint_stats = self.session.cache_stats();
+        let result = self.run_turn_active(task, &mut on_text).await;
+        let was_cancelled = result
+            .as_ref()
+            .is_err_and(|error| error.downcast_ref::<TurnCancelled>().is_some());
+        self.cancel_requested.store(false, Ordering::Release);
+        if was_cancelled {
+            self.messages = checkpoint_messages;
+            self.session
+                .rollback_to(&self.messages, checkpoint_stats)
+                .context("取消任务后回滚会话失败")?;
+        }
+        result
+    }
+
+    async fn run_turn_active(
+        &mut self,
+        task: String,
+        on_text: &mut impl FnMut(&str),
+    ) -> Result<String> {
+        cancellable(Arc::clone(&self.cancel_requested), self.maybe_compact()).await??;
         let definitions = self.tools.definitions();
         self.push_message(Message::text("user", task))?;
 
         let mut step = 0;
         loop {
+            if self.cancel_requested.load(Ordering::Acquire) {
+                return Err(TurnCancelled.into());
+            }
             step += 1;
             if let Some(max) = self.max_steps {
                 if step > max {
@@ -233,11 +297,15 @@ impl Agent {
                 current: step,
                 total: self.max_steps,
             });
-            let (assistant, usage) = self
+            let provider = self
                 .provider()
-                .ok_or_else(|| anyhow::anyhow!("尚未登录 provider，请先使用 /login 登录"))?
-                .chat_stream(&self.messages, &definitions, &mut on_text)
-                .await?;
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("尚未登录 provider，请先使用 /login 登录"))?;
+            let (assistant, usage) = cancellable(
+                Arc::clone(&self.cancel_requested),
+                provider.chat_stream(&self.messages, &definitions, on_text),
+            )
+            .await??;
             if let Some(usage_info) = usage {
                 self.emit(AgentEvent::Usage(usage_info));
             }
@@ -262,10 +330,12 @@ impl Agent {
                     name: call.function.name.clone(),
                     args: call.function.arguments.clone(),
                 });
-                let output = self
-                    .tools
-                    .execute(&call.function.name, &call.function.arguments)
-                    .await;
+                let output = cancellable(
+                    Arc::clone(&self.cancel_requested),
+                    self.tools
+                        .execute(&call.function.name, &call.function.arguments),
+                )
+                .await?;
                 self.emit(AgentEvent::ToolResult {
                     output: output.clone(),
                 });
@@ -364,6 +434,22 @@ impl Agent {
     }
 }
 
+async fn cancellable<T>(
+    cancel_requested: Arc<AtomicBool>,
+    future: impl Future<Output = T>,
+) -> Result<T> {
+    tokio::select! {
+        output = future => Ok(output),
+        _ = wait_for_cancellation(cancel_requested) => Err(TurnCancelled.into()),
+    }
+}
+
+async fn wait_for_cancellation(cancel_requested: Arc<AtomicBool>) {
+    while !cancel_requested.load(Ordering::Acquire) {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
 fn estimate_tokens(messages: &[Message]) -> usize {
     let mut total = 0;
     for message in messages {
@@ -435,6 +521,43 @@ mod tests {
         let short = vec![Message::text("user", "hi")];
         let long = vec![Message::text("user", "x".repeat(10_000))];
         assert!(estimate_tokens(&long) > estimate_tokens(&short));
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_a_pending_operation() {
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let result = cancellable(
+            cancelled,
+            std::future::pending::<Result<(), std::convert::Infallible>>(),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(error) if error.downcast_ref::<TurnCancelled>().is_some()
+        ));
+    }
+
+    #[tokio::test]
+    async fn pre_requested_cancellation_keeps_the_previous_context() {
+        let provider = OpenAiProvider::new(
+            "test-key".to_owned(),
+            "http://localhost".to_owned(),
+            "test-model".to_owned(),
+        );
+        let mut agent = Agent::new_ephemeral(provider, PathBuf::from("."), Some(3));
+        agent.messages.push(Message::text("user", "previous"));
+        agent.cancellation_handle().store(true, Ordering::Release);
+
+        let error = agent
+            .run_turn("must not be saved".into(), |_| {})
+            .await
+            .unwrap_err();
+
+        assert!(error.downcast_ref::<TurnCancelled>().is_some());
+        assert_eq!(agent.messages.len(), 2);
+        assert_eq!(agent.messages[1].content.as_deref(), Some("previous"));
+        assert!(!agent.cancel_requested.load(Ordering::Acquire));
     }
 
     #[test]

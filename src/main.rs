@@ -216,7 +216,8 @@ TUI 快捷键:
   ↑ / ↓           浏览历史输入
   PgUp / PgDn     滚动对话历史 (Ctrl-J / Ctrl-K 同效)
   Ctrl+L          清空对话上下文
-  Ctrl+C, Esc     退出
+  Esc             取消当前任务；空闲时退出
+  Ctrl+C          退出
 
 CLI REPL 命令:
   /login          登录并保存 MiniMax 或 9Router API Key（TUI 中输入）

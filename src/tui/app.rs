@@ -4,11 +4,15 @@ use std::{
     env,
     path::PathBuf,
     process,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Result;
-use ratatui::layout::Rect;
+use ratatui::{layout::Rect, text::Line};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{agent::AgentEvent, session::CacheStats};
@@ -102,6 +106,7 @@ pub enum Status {
     SwitchingProvider,
     RunningTool(String),
     Compacting,
+    Cancelling,
 }
 
 impl Status {
@@ -114,6 +119,7 @@ impl Status {
             Self::SwitchingProvider => "正在切换 provider…".into(),
             Self::RunningTool(name) => format!("正在运行 {name}…"),
             Self::Compacting => "正在压缩上下文…".into(),
+            Self::Cancelling => "正在取消任务…".into(),
         }
     }
 }
@@ -175,6 +181,10 @@ pub struct App {
     pub transcript_scroll: ScrollViewState,
     pub transcript_area: Rect,
     pub transcript_lines: Vec<String>,
+    pub(super) transcript_render_cache: Vec<Line<'static>>,
+    pub(super) transcript_cache_width: usize,
+    pub(super) transcript_revision: u64,
+    pub(super) transcript_cached_revision: u64,
     pub selection_anchor: Option<SelectionPoint>,
     pub selection_focus: Option<SelectionPoint>,
     pub selecting: bool,
@@ -192,6 +202,7 @@ pub struct App {
     pub busy: bool,
     pub should_quit: bool,
     pub tick: usize,
+    pub cancel_requested: Arc<AtomicBool>,
 }
 
 impl App {
@@ -208,6 +219,10 @@ impl App {
             transcript_scroll: ScrollViewState::following_end(),
             transcript_area: Rect::default(),
             transcript_lines: Vec::new(),
+            transcript_render_cache: Vec::new(),
+            transcript_cache_width: 0,
+            transcript_revision: 1,
+            transcript_cached_revision: 0,
             selection_anchor: None,
             selection_focus: None,
             selecting: false,
@@ -225,10 +240,12 @@ impl App {
             busy: false,
             should_quit: false,
             tick: 0,
+            cancel_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn apply_agent_event(&mut self, event: AgentEvent) {
+        self.mark_transcript_changed();
         match event {
             AgentEvent::Delta(delta) => {
                 self.streaming.push_str(&delta);
@@ -259,6 +276,14 @@ impl App {
                 self.flush_streaming();
                 self.finish_turn();
             }
+            AgentEvent::Cancelled { cache_stats } => {
+                self.flush_streaming();
+                self.cache_stats = cache_stats;
+                self.entries.push(Entry::Info(
+                    "任务已取消；未完成内容未加入模型上下文。".into(),
+                ));
+                self.finish_turn();
+            }
             AgentEvent::Error(message) => {
                 self.flush_streaming();
                 self.entries.push(Entry::Error(message));
@@ -281,7 +306,23 @@ impl App {
             }
         }
         self.transcript_scroll.scroll_to_end();
+    }
+
+    pub fn set_cancellation_handle(&mut self, handle: Arc<AtomicBool>) {
+        self.cancel_requested = handle;
+    }
+
+    pub fn request_cancel(&mut self) {
+        self.cancel_requested.store(true, Ordering::Release);
+        self.status = Status::Cancelling;
+    }
+
+    pub fn refresh_tokens(&mut self) {
         self.tokens = estimate_tokens(self);
+    }
+
+    pub fn mark_transcript_changed(&mut self) {
+        self.transcript_revision = self.transcript_revision.wrapping_add(1);
     }
 
     pub fn flush_streaming(&mut self) {
@@ -304,6 +345,7 @@ impl App {
         if self.busy || self.input.trim().is_empty() {
             return;
         }
+        self.mark_transcript_changed();
         let trimmed = self.input.trim();
         if let Some(provider) = self.login_provider.take() {
             let key = std::mem::take(&mut self.input);
@@ -444,6 +486,7 @@ impl App {
         self.entries.push(Entry::User(text.clone()));
         self.busy = true;
         self.status = Status::Thinking;
+        self.cancel_requested.store(false, Ordering::Release);
         self.transcript_scroll.scroll_to_end();
         let _ = tx.send(UserCommand::Submit(text));
     }

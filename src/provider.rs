@@ -5,6 +5,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+const PROVIDER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const PROVIDER_READ_TIMEOUT: Duration = Duration::from_secs(90);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
@@ -108,9 +111,20 @@ impl OpenAiProvider {
         base_url: String,
         model: String,
     ) -> Self {
+        Self::named_with_read_timeout(name, api_key, base_url, model, PROVIDER_READ_TIMEOUT)
+    }
+
+    fn named_with_read_timeout(
+        name: impl Into<String>,
+        api_key: String,
+        base_url: String,
+        model: String,
+        read_timeout: Duration,
+    ) -> Self {
         Self {
             client: Client::builder()
-                .connect_timeout(Duration::from_secs(10))
+                .connect_timeout(PROVIDER_CONNECT_TIMEOUT)
+                .read_timeout(read_timeout)
                 .build()
                 .expect("reqwest client configuration must be valid"),
             name: name.into(),
@@ -423,6 +437,27 @@ mod tests {
         format!("http://{address}")
     }
 
+    fn serve_stalled_sse() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(StdDuration::from_secs(2)))
+                .unwrap();
+            let mut request = [0_u8; 8 * 1024];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\ndata: {{\"choices\":[{{\"delta\":{{\"content\":\"partial\"}}}}]}}\n\n"
+            )
+            .unwrap();
+            stream.flush().unwrap();
+            thread::sleep(StdDuration::from_secs(1));
+        });
+        format!("http://{address}")
+    }
+
     #[test]
     fn rebuilds_streamed_text_and_tool_calls() {
         let events = [
@@ -555,5 +590,24 @@ mod tests {
             .unwrap_err();
         assert_eq!(streamed, "partial");
         assert!(error.to_string().contains("完成标记"));
+    }
+
+    #[tokio::test]
+    async fn times_out_when_sse_stalls_mid_response() {
+        let base_url = serve_stalled_sse();
+        let provider = OpenAiProvider::named_with_read_timeout(
+            "test",
+            "test-key".into(),
+            base_url,
+            "test-model".into(),
+            Duration::from_millis(50),
+        );
+        let mut streamed = String::new();
+        let error = provider
+            .chat_stream(&[], &[], &mut |text| streamed.push_str(text))
+            .await
+            .unwrap_err();
+        assert_eq!(streamed, "partial");
+        assert!(error.to_string().contains("读取流式响应失败"));
     }
 }

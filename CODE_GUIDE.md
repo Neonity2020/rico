@@ -127,6 +127,7 @@ pub enum AgentEvent {
     Step { current: usize, total: usize },
     Compacting,
     Complete,
+    Cancelled { cache_stats: CacheStats },
     Error(String),
     ProviderChanged { provider: String, model: String },
 }
@@ -143,7 +144,7 @@ pub enum AgentEvent {
 ### SSE 流式传输与事件重建
 
 - 构造 `POST {base_url}/chat/completions`，开启 `stream: true`。
-- 不设全局总响应超时，保留连接超时，保证长思考或长代码生成不被强制掐断。
+- 不设全局总响应超时；连接超时为 10 秒，连续读停滞超时为 90 秒。只要 SSE 持续产生数据，长思考或长代码生成不会被强制掐断；半开连接则不会无限等待。
 - **`find_event_end`**：精确定位 `\n\n` 或 `\r\n\r\n` 分隔符，以字节级缓冲消费完整的 SSE 事件块。
 - **`tool_calls` 去重累加**：针对部分兼容代理在每个 chunk 中重复发送完整 `name` 和 `id` 的行为，`process_event` 确保 `id` 和 `name` 仅在初次或有效更新时赋值，避免 `"bashbash"` 重复拼接，同时对 `arguments` 进行增量 `push_str`。
 
@@ -158,6 +159,7 @@ pub enum AgentEvent {
   - `message`：即时落盘的消息。
   - `compaction`：记录压缩前 token 数、生成的摘要及活跃上下文快照。
   - `reset`：`/clear` 事件标记。
+  - `rollback`：取消任务时记录本轮开始前的活跃上下文和缓存统计快照，恢复时覆盖未完成消息。
 - **断电与崩溃容错**：`load_messages` 若遇文件最后一行被意外强杀导致的残缺 JSON，自动打印警告并跳过尾行，保证历史会话平稳恢复。
 
 ---
@@ -183,6 +185,7 @@ rico 默认注册五个面向编码与研发的内置工具：
    - 拦截 `.env*`、`auth.json`、`.aws`、`.ssh`、`id_rsa`、`id_ed25519`、`id_ecdsa`、`id_dsa`、`config.env`、`*.key`、`*.pem` 等凭据文件，防止文件工具意外泄露密钥。
 3. **孤儿进程清理**：
    - `BashTool` 在 Unix 系统下设置 `command.process_group(0)`。超时触发时，向整个进程组发送 `SIGKILL`，杜绝后台死循环脚本或失控子进程残留。
+   - 命令本身退出后，stdout/stderr 管道最多再等待 2 秒；若后台进程仍持有管道，则终止进程组并返回错误，避免输出采集永久等待。
 4. **有界输出采集（`read_bounded_tail` + `truncate_tail`）**：
    - stdout/stderr 在读取阶段分别只保留 50 KiB 尾部，避免高输出命令先耗尽进程内存；合并后再限制为 2,000 行或 50 KiB。
 
@@ -211,7 +214,7 @@ main 启动
 
 - `crossterm::event::EventStream`：按键（Enter / Esc / Ctrl+L / Ctrl-C / ↑/↓ / PgUp/PgDn / 字符输入等）
 - `event_rx`：Agent 推送的 `AgentEvent`
-- `tokio::time::sleep(80ms)`：节流重绘，保证流式输出视觉连贯
+- 绘制由独立的 50ms `interval` 时钟驱动，并采用 `MissedTickBehavior::Skip`：输入和 agent 事件只更新状态、标记 dirty，不能直接触发绘制；空闲且内容未变化时完全停止重绘。
 
 ### 终端初始化与清理
 
@@ -235,7 +238,9 @@ main 启动
 └──────────────────────────────────────────┘
 ```
 
-- 流式 `AgentEvent::Delta` 累加到 `streaming: Option<Entry>`，遇 `Complete` / `Error` / 下一条用户消息时 flush 到 `entries`。
+- 流式 `AgentEvent::Delta` 累加到 `streaming`，每帧最多消费 256 个 agent 事件，并在批次结束后统一重算 token，避免高频流式输出饿死键盘事件。
+- 已完成对话的 Markdown 排版结果按内容版本和终端宽度缓存；只有文本或宽度变化时才重新解析，状态动画仅复用可见行。
+- 运行中按 `Esc` 通过共享取消标记中断 provider、上下文压缩或工具 Future；agent 随后追加 `rollback` 并发出 `Cancelled`，确保恢复会话时也不会带入半轮消息。
 - `Ctrl+L` 发送 `UserCommand::Reset`，agent 落盘 `Reset` 事件并清空上下文。
 - `↑` / `↓` 在历史输入中切换（仅非 busy 时）；`PgUp` / `PgDn` / `Ctrl-J` / `Ctrl-K` 滚动对话区。
 - 历史区自动跟随新内容（`autoscroll`），用户滚动后停止自动跟随；`PgDn` 至底部时恢复。

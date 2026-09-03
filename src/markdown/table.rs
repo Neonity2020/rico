@@ -169,7 +169,8 @@ pub fn render_table(
         for (i, cell) in row.iter().enumerate() {
             if i < cols {
                 natural_widths[i] = natural_widths[i].max(display_width(cell));
-                min_word_widths[i] = min_word_widths[i].max(longest_word_width(cell, max_unbroken).max(1));
+                min_word_widths[i] =
+                    min_word_widths[i].max(longest_word_width(cell, max_unbroken).max(1));
             }
         }
     }
@@ -268,7 +269,10 @@ pub fn render_table(
         let mut spans = Vec::new();
         spans.push(Span::styled("│", border_style));
         for i in 0..cols {
-            let text = header_cells[i].get(line_idx).map(String::as_str).unwrap_or("");
+            let text = header_cells[i]
+                .get(line_idx)
+                .map(String::as_str)
+                .unwrap_or("");
             let align = aligns.get(i).copied().unwrap_or(Alignment::Left);
             let padded = pad_cell(text, column_widths[i], align);
             spans.push(Span::styled(padded, header_style));

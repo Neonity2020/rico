@@ -26,8 +26,7 @@ pub const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', 
 pub fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let area = frame.area();
     let wrap_width = area.width.saturating_sub(1).max(1) as usize;
-    let editor_rows = editor_rows(&app.input, wrap_width)
-        .clamp(1, MAX_EDITOR_ROWS as usize) as u16;
+    let editor_rows = editor_rows(&app.input, wrap_width).clamp(1, MAX_EDITOR_ROWS as usize) as u16;
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -45,43 +44,53 @@ pub fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
 pub fn render_conversation(frame: &mut ratatui::Frame<'_>, app: &mut App, area: Rect) {
     let width = area.width.max(1) as usize;
-    let mut lines = Vec::new();
-    if app.entries.is_empty() && app.streaming.is_empty() {
-        let model = if app.provider.is_empty() {
-            app.model.clone()
-        } else {
-            format!("{} · {}", app.provider, app.model)
-        };
-        lines.extend(render_welcome(
-            &model,
-            PHILOSOPHIES[app.philosophy_index],
-            width,
-        ));
-    }
-    for entry in &app.entries {
-        lines.extend(render_entry(entry, width));
-    }
-    if !app.streaming.is_empty() {
-        lines.push(Line::raw(""));
-        let visible = visible_assistant_text(&app.streaming);
-        lines.extend(pad_lines(
-            crate::markdown::render(&visible, width.saturating_sub(4)),
-            2,
-        ));
-    }
-    if let Some((name, args)) = &app.pending_tool {
-        lines.extend(render_tool(name, args, None, width));
+    if app.transcript_cached_revision != app.transcript_revision
+        || app.transcript_cache_width != width
+    {
+        let mut lines = Vec::new();
+        if app.entries.is_empty() && app.streaming.is_empty() {
+            let model = if app.provider.is_empty() {
+                app.model.clone()
+            } else {
+                format!("{} · {}", app.provider, app.model)
+            };
+            lines.extend(render_welcome(
+                &model,
+                PHILOSOPHIES[app.philosophy_index],
+                width,
+            ));
+        }
+        for entry in &app.entries {
+            lines.extend(render_entry(entry, width));
+        }
+        if !app.streaming.is_empty() {
+            lines.push(Line::raw(""));
+            let visible = visible_assistant_text(&app.streaming);
+            lines.extend(pad_lines(
+                crate::markdown::render(&visible, width.saturating_sub(4)),
+                2,
+            ));
+        }
+        if let Some((name, args)) = &app.pending_tool {
+            lines.extend(render_tool(name, args, None, width));
+        }
+        app.transcript_lines = lines.iter().map(line_text).collect();
+        app.transcript_render_cache = lines;
+        app.transcript_cache_width = width;
+        app.transcript_cached_revision = app.transcript_revision;
     }
 
     let viewport = area.height as usize;
-    app.transcript_scroll.update_layout(lines.len(), viewport);
+    app.transcript_scroll
+        .update_layout(app.transcript_render_cache.len(), viewport);
     app.transcript_area = area;
-    app.transcript_lines = lines.iter().map(line_text).collect();
     let start = app.transcript_scroll.top;
-    let visible = lines
-        .into_iter()
+    let visible = app
+        .transcript_render_cache
+        .iter()
         .skip(start)
         .take(viewport)
+        .cloned()
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(Text::from(visible)), area);
     render_selection(frame, app);
@@ -245,7 +254,10 @@ pub fn render_entry(entry: &Entry, width: usize) -> Vec<Line<'static>> {
             let inner = max_line_w.max(1);
             let bubble_width = inner + 4;
             let background = Style::default().bg(USER_BG).fg(Color::White);
-            let mut lines = vec![Line::from(Span::styled(" ".repeat(bubble_width), background))];
+            let mut lines = vec![Line::from(Span::styled(
+                " ".repeat(bubble_width),
+                background,
+            ))];
             for text_line in text_lines {
                 let padding = inner.saturating_sub(UnicodeWidthStr::width(text_line.as_str()));
                 lines.push(Line::from(Span::styled(
@@ -253,7 +265,10 @@ pub fn render_entry(entry: &Entry, width: usize) -> Vec<Line<'static>> {
                     background,
                 )));
             }
-            lines.push(Line::from(Span::styled(" ".repeat(bubble_width), background)));
+            lines.push(Line::from(Span::styled(
+                " ".repeat(bubble_width),
+                background,
+            )));
             lines
         }
         Entry::Assistant(text) => {
@@ -356,9 +371,7 @@ pub fn render_editor(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let wrap_width = width.saturating_sub(1).max(1);
     let wrapped_lines = wrap_text(content, wrap_width);
     let text_widget = Text::from(wrapped_lines.into_iter().map(Line::raw).collect::<Vec<_>>());
-    let paragraph = Paragraph::new(text_widget)
-        .style(style)
-        .block(block);
+    let paragraph = Paragraph::new(text_widget).style(style).block(block);
     frame.render_widget(paragraph, area);
 
     if !app.busy {
@@ -419,7 +432,7 @@ pub fn render_footer(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     );
     let first = join_sides(&left, &right, area.width as usize);
     let hints = if app.busy {
-        "Ctrl-C 退出 · PgUp/PgDn 滚动"
+        "Esc 取消当前任务 · Ctrl-C 退出 · PgUp/PgDn 滚动"
     } else {
         "Enter 发送 · Shift-Enter 换行 · /login 登录 · /provider 切换 · /cache 统计 · ↑/↓ 历史 · Ctrl-L 清空 · Ctrl-D 退出"
     };

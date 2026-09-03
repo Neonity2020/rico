@@ -73,7 +73,10 @@ pub fn parse_list_item(line: &str) -> Option<ListItem> {
     }
 
     // Ordered numbers: 1. , 2. etc.
-    let digits_count = trimmed_start.chars().take_while(char::is_ascii_digit).count();
+    let digits_count = trimmed_start
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .count();
     if digits_count > 0 && digits_count <= 9 {
         let after_digits = &trimmed_start[digits_count..];
         if let Some(rest) = after_digits.strip_prefix(". ") {
@@ -102,20 +105,26 @@ pub fn render_list_item(item: &ListItem, width: usize) -> Vec<Line<'static>> {
                 1 => "◦ ",
                 _ => "▪ ",
             };
-            (symbol.to_string(), Style::default().fg(BULLET_COLOR).add_modifier(Modifier::BOLD))
+            (
+                symbol.to_string(),
+                Style::default()
+                    .fg(BULLET_COLOR)
+                    .add_modifier(Modifier::BOLD),
+            )
         }
         ListKind::Ordered(num) => (
             format!("{num}. "),
-            Style::default().fg(BULLET_COLOR).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(BULLET_COLOR)
+                .add_modifier(Modifier::BOLD),
         ),
         ListKind::Task(true) => (
             "☑ ".to_string(),
-            Style::default().fg(TASK_DONE_COLOR).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(TASK_DONE_COLOR)
+                .add_modifier(Modifier::BOLD),
         ),
-        ListKind::Task(false) => (
-            "☐ ".to_string(),
-            Style::default().fg(TASK_TODO_COLOR),
-        ),
+        ListKind::Task(false) => ("☐ ".to_string(), Style::default().fg(TASK_TODO_COLOR)),
     };
 
     let bullet_width = UnicodeWidthStr::width(bullet_str.as_str());

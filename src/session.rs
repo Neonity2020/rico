@@ -104,6 +104,11 @@ enum SessionEntry {
     Reset {
         timestamp: u64,
     },
+    Rollback {
+        timestamp: u64,
+        active_messages: Vec<Message>,
+        cache_stats: CacheStats,
+    },
 }
 
 pub struct SessionStore {
@@ -197,6 +202,20 @@ impl SessionStore {
         self.append(&SessionEntry::Reset {
             timestamp: now_millis(),
         })
+    }
+
+    pub fn rollback_to(
+        &mut self,
+        active_messages: &[Message],
+        cache_stats: CacheStats,
+    ) -> Result<()> {
+        self.append(&SessionEntry::Rollback {
+            timestamp: now_millis(),
+            active_messages: active_messages.to_vec(),
+            cache_stats,
+        })?;
+        self.cache_stats = cache_stats;
+        Ok(())
     }
 
     fn append(&self, entry: &SessionEntry) -> Result<()> {
@@ -297,6 +316,14 @@ fn load_messages(path: &Path) -> Result<(Vec<Message>, CacheStats)> {
                 messages.clear();
                 cache_stats = CacheStats::default();
             }
+            SessionEntry::Rollback {
+                active_messages,
+                cache_stats: restored_stats,
+                ..
+            } => {
+                messages = active_messages;
+                cache_stats = restored_stats;
+            }
             SessionEntry::Header { .. } => {}
         }
     }
@@ -366,6 +393,30 @@ mod tests {
         assert_eq!(restored.len(), 3);
         assert_eq!(restored[1].content.as_deref(), Some("summary"));
         assert_eq!(restored[2].content.as_deref(), Some("new"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rollback_discards_incomplete_turn_on_resume() {
+        let path = temp_file();
+        let mut store = SessionStore {
+            path: Some(path.clone()),
+            cache_stats: CacheStats::default(),
+        };
+        let system = Message::text("system", "system");
+        let checkpoint = vec![system.clone()];
+        store.append_message(&system).unwrap();
+        store
+            .append_message(&Message::text("user", "incomplete"))
+            .unwrap();
+        store
+            .rollback_to(&checkpoint, CacheStats::default())
+            .unwrap();
+
+        let (restored, stats) = load_messages(&path).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].content.as_deref(), Some("system"));
+        assert_eq!(stats, CacheStats::default());
         let _ = fs::remove_file(path);
     }
 

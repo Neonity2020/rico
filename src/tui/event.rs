@@ -67,6 +67,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, tx: &UnboundedSender<UserCommand
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
         if !app.busy {
+            app.mark_transcript_changed();
             app.entries.clear();
             app.streaming.clear();
             app.transcript_scroll.scroll_to_end();
@@ -78,6 +79,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent, tx: &UnboundedSender<UserCommand
     }
     if app.busy {
         match key.code {
+            KeyCode::Esc => app.request_cancel(),
             KeyCode::PageUp => app.transcript_scroll.scroll_by(-8),
             KeyCode::PageDown => app.transcript_scroll.scroll_by(8),
             _ => {}
