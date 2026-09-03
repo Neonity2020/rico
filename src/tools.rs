@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     future::Future,
     path::{Component, Path, PathBuf},
@@ -9,7 +9,11 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
-use tokio::{process::Command, time::timeout};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::Command,
+    time::timeout,
+};
 
 const DEFAULT_READ_LINES: usize = 2_000;
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
@@ -300,7 +304,7 @@ impl Tool for BashTool {
             let command_text = required_str(&args, "command")?;
             let timeout_seconds = optional_usize(&args, "timeout")?
                 .unwrap_or(DEFAULT_BASH_TIMEOUT as usize)
-                .min(MAX_BASH_TIMEOUT as usize) as u64;
+                .clamp(1, MAX_BASH_TIMEOUT as usize) as u64;
             let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
             let mut command = Command::new(shell);
             command
@@ -315,11 +319,15 @@ impl Tool for BashTool {
                 command.process_group(0);
             }
 
-            let child = command.spawn().context("无法执行 shell")?;
+            let mut child = command.spawn().context("无法执行 shell")?;
             let child_id = child.id();
+            let stdout = child.stdout.take().context("无法捕获命令标准输出")?;
+            let stderr = child.stderr.take().context("无法捕获命令错误输出")?;
+            let stdout_task = tokio::spawn(read_bounded_tail(stdout));
+            let stderr_task = tokio::spawn(read_bounded_tail(stderr));
 
-            let output = match timeout(Duration::from_secs(timeout_seconds), child.wait_with_output()).await {
-                Ok(res) => res.context("读取命令输出失败")?,
+            let status = match timeout(Duration::from_secs(timeout_seconds), child.wait()).await {
+                Ok(res) => res.context("等待命令结束失败")?,
                 Err(_) => {
                     #[cfg(unix)]
                     if let Some(pid) = child_id {
@@ -327,35 +335,56 @@ impl Tool for BashTool {
                             .args(["-KILL", &format!("-{pid}")])
                             .output();
                     }
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    let _ = stdout_task.await;
+                    let _ = stderr_task.await;
                     anyhow::bail!("命令超过 {timeout_seconds} 秒，已终止");
                 }
             };
+            let stdout = stdout_task.await.context("标准输出读取任务失败")??;
+            let stderr = stderr_task.await.context("错误输出读取任务失败")??;
             let combined = format!(
                 "{}{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                if output.stdout.is_empty() || output.stderr.is_empty() {
+                String::from_utf8_lossy(&stdout),
+                if stdout.is_empty() || stderr.is_empty() {
                     ""
                 } else {
                     "\n"
                 },
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&stderr)
             );
             let rendered = if combined.trim().is_empty() {
                 "(no output)".to_owned()
             } else {
                 combined
             };
-            if output.status.success() {
+            if status.success() {
                 Ok(rendered)
             } else {
                 anyhow::bail!(
                     "{}\nCommand exited with code {}",
                     rendered,
-                    output.status.code().unwrap_or(-1)
+                    status.code().unwrap_or(-1)
                 )
             }
         })
     }
+}
+
+async fn read_bounded_tail(mut reader: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
+    let mut tail = VecDeque::with_capacity(MAX_OUTPUT_BYTES);
+    let mut chunk = [0_u8; 8 * 1024];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        tail.extend(&chunk[..read]);
+        let excess = tail.len().saturating_sub(MAX_OUTPUT_BYTES);
+        tail.drain(..excess);
+    }
+    Ok(tail.into())
 }
 
 fn required_str<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
@@ -492,6 +521,23 @@ mod tests {
             .await;
         assert_eq!(result, "rico");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn command_output_is_bounded_while_reading() {
+        let reader =
+            tokio::io::AsyncReadExt::take(tokio::io::repeat(b'x'), (MAX_OUTPUT_BYTES * 3) as u64);
+        let output = read_bounded_tail(reader).await.unwrap();
+        assert_eq!(output.len(), MAX_OUTPUT_BYTES);
+        assert!(output.iter().all(|byte| *byte == b'x'));
+    }
+
+    #[test]
+    fn workspace_rejects_escape_and_sensitive_paths() {
+        let workspace = Workspace::new(PathBuf::from("/tmp/workspace"));
+        assert!(workspace.path("../secret").is_err());
+        assert!(workspace.path(".env").is_err());
+        assert!(workspace.path("nested/id_rsa").is_err());
     }
 
     #[test]

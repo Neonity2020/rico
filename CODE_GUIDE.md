@@ -21,7 +21,7 @@
     ├── agent.rs        # Agent 核心：提示词、工具调度循环、上下文自动压缩、事件通道
     ├── provider.rs     # Provider：OpenAI 兼容 SSE 流式请求与 tool_calls、Token Usage 解析
     ├── session.rs      # 会话存储：基于 JSONL 的追加存储、缓存命中统计与会话恢复
-    ├── tools.rs        # 工具注册表：read / write / edit / bash 及路径与进程沙箱
+    ├── tools.rs        # 工具注册表：受控文件工具、完整 shell、超时与输出限制
     ├── markdown/       # Markdown 解析与渲染文件组
     │   ├── mod.rs      # 统一入口与各块级元素协调 (render)
     │   ├── code.rs     # 代码块词法高亮 (highlight_code) 与等宽框线闭合
@@ -49,10 +49,9 @@
    - `--tui` / `-t`（默认）与 `--cli` / `-C`：选择运行模式。
    - 剩余参数被拼装为 `initial_task`，作为启动后的首轮任务执行。
 2. **多级配置加载（`load_config`）**：
-   - 若环境变量已存在 `OPENAI_API_KEY`，直接复用。
-   - 若环境变量指定了 `RICO_CONFIG`，按指定路径读取。
-   - 否则优先检查并加载当前工作目录下的 `.env.local` 或 `.env`（方便本地开发调试）。
-   - 最后尝试加载用户级配置 `~/.config/rico/config.env`。
+   - 现有环境变量拥有最高优先级，dotenv 加载不会覆盖它们。
+   - 若指定 `RICO_CONFIG`，仅从该文件补充缺失配置。
+   - 否则依次从当前目录的 `.env.local`、`.env` 和用户级 `~/.config/rico/config.env` 补充缺失配置。
 3. **敏感凭证防泄漏**：
    - 验证 `OPENAI_API_KEY` 有效性（拒绝 `your-` 占位符）。
    - **`env::remove_var("OPENAI_API_KEY")`**：读取后立即从当前进程环境变量中抹除，防止随后续的 `bash` 子进程环境暴露给未知命令。
@@ -157,7 +156,7 @@ pub enum AgentEvent {
 
 ---
 
-## 6. 工具箱与安全沙箱（`src/tools.rs`）
+## 6. 工具箱与信任边界（`src/tools.rs`）
 
 rico 默认注册四个面向编码的工具：
 
@@ -177,12 +176,14 @@ rico 默认注册四个面向编码的工具：
    - 拦截 `.env*`、`.aws`、`.ssh`、`id_rsa`、`id_ed25519`、`id_ecdsa`、`id_dsa`、`config.env`、`*.key`、`*.pem` 等凭据文件，防止文件工具意外泄露密钥。
 3. **孤儿进程清理**：
    - `BashTool` 在 Unix 系统下设置 `command.process_group(0)`。超时触发时，向整个进程组发送 `SIGKILL`，杜绝后台死循环脚本或失控子进程残留。
-4. **输出截断（`truncate_tail`）**：
-   - 工具输出最多保留末尾 2,000 行或 50 KiB，保留最关键的最新输出（如编译报错与测试结果），防止超大输出炸穿上下文。
+4. **有界输出采集（`read_bounded_tail` + `truncate_tail`）**：
+   - stdout/stderr 在读取阶段分别只保留 50 KiB 尾部，避免高输出命令先耗尽进程内存；合并后再限制为 2,000 行或 50 KiB。
+
+这些限制只适用于 `read`、`write`、`edit`。`bash` 是当前用户权限下的完整 shell，可以访问工作区外文件和网络，不构成操作系统级沙箱，只应在可信项目中启用。
 
 ---
 
-## 7. TUI 前端（`src/tui.rs`）
+## 7. TUI 前端（`src/tui/`）
 
 ### 进程拓扑
 
@@ -234,7 +235,7 @@ main 启动
 
 ### 安全一致性
 
-- TUI 模式与 CLI 模式共用同一个 `Agent`，因此 **路径沙箱、敏感文件黑名单、密钥从环境变量抹除、超时与进程组清理** 等全部继承，零特例。
+- TUI 模式与 CLI 模式共用同一个 `Agent`，因此 **文件工具路径防护、敏感文件黑名单、API Key 环境变量移除、超时、输出限制与进程组清理** 等行为保持一致。
 - TUI 不会调用任何额外 shell 或网络命令；唯一网络路径仍由 `provider.rs` 控制。
 
 ---

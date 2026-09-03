@@ -10,12 +10,7 @@ pub mod event;
 pub mod selection;
 pub mod view;
 
-use std::{
-    io::stdout,
-    path::PathBuf,
-    process::Command,
-    time::Duration,
-};
+use std::{io::stdout, path::PathBuf, process::Command, time::Duration};
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -27,11 +22,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures_util::StreamExt;
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::Rect,
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use scopeguard::defer;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 

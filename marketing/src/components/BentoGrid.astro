@@ -3,7 +3,7 @@ import { Zap, Sparkles, Shield, Database, Terminal, ArrowRight, Activity } from 
 ---
 
 <section id="features" class="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-  <div class="text-center mb-16">
+  <div id="architecture" class="text-center mb-16 scroll-mt-24">
     <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] text-xs font-mono font-medium mb-3 border border-[#6EBEB4]/20">
       <Zap class="w-3.5 h-3.5" />
       <span>架构设计原则</span>
@@ -27,7 +27,7 @@ import { Zap, Sparkles, Shield, Database, Terminal, ArrowRight, Activity } from 
           <Zap class="w-6 h-6" />
         </div>
         <h3 class="text-xl sm:text-2xl font-bold text-white mb-3 tracking-tight">
-          纯 Rust 无框架设计，毫秒冷启
+          纯 Rust 架构，单一二进制交付
         </h3>
         <p class="text-gray-400 text-sm sm:text-base leading-relaxed mb-6">
           没有臃肿的 LangChain 抽象，没有 Python / Node 解释器与数百兆的 node_modules。直接基于 <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">reqwest</code> + <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">tokio</code> + <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">ratatui</code> 构建，单一二进制文件秒级下发，即开即用。
@@ -39,7 +39,7 @@ import { Zap, Sparkles, Shield, Database, Terminal, ArrowRight, Activity } from 
         <div>
           <div class="flex justify-between text-gray-400 mb-1">
             <span class="text-white font-semibold">rico (Rust)</span>
-            <span class="text-[#6EBEB4]">~18 MB 内存占用</span>
+            <span class="text-[#6EBEB4]">单一 release 二进制</span>
           </div>
           <div class="w-full h-2 rounded-full bg-white/5 overflow-hidden">
             <div class="h-full bg-[#6EBEB4] rounded-full w-[8%]"></div>
@@ -47,8 +47,8 @@ import { Zap, Sparkles, Shield, Database, Terminal, ArrowRight, Activity } from 
         </div>
         <div>
           <div class="flex justify-between text-gray-500 mb-1">
-            <span>常见 Python / TS Agent</span>
-            <span>350 MB ~ 650 MB</span>
+            <span>运行时依赖</span>
+            <span>无需 Python / Node.js</span>
           </div>
           <div class="w-full h-2 rounded-full bg-white/5 overflow-hidden">
             <div class="h-full bg-gray-600 rounded-full w-[85%]"></div>
@@ -69,30 +69,30 @@ import { Zap, Sparkles, Shield, Database, Terminal, ArrowRight, Activity } from 
           Prompt Cache 深度适配
         </h3>
         <p class="text-gray-400 text-sm leading-relaxed mb-6">
-          开启流式响应的 <code class="font-mono text-[#8FE2D8] text-xs">stream_options.include_usage</code>，多源兼容 OpenAI、MiniMax 与 DeepSeek 缓存命中细粒度指标，多轮对话 API 费用直降 70% 以上。
+          开启流式响应的 <code class="font-mono text-[#8FE2D8] text-xs">stream_options.include_usage</code>，解析 OpenAI、MiniMax 与 DeepSeek 风格的缓存命中指标，实际命中率取决于模型服务与会话内容。
         </p>
       </div>
 
       <div class="rounded-xl bg-[#0B0D13]/80 p-3.5 border border-white/5 font-mono text-xs space-y-1.5">
         <div class="text-[#10B981] font-semibold flex items-center justify-between">
           <span>/cache 命令支持</span>
-          <span>CH85.2%</span>
+          <span>示例 CH85.2%</span>
         </div>
         <div class="text-gray-400 text-[11px]">单轮/总计请求命中率精准追踪</div>
       </div>
     </div>
 
-    <!-- Card 3: 4 Core Tools Sandbox (1-col) -->
+    <!-- Card 3: Controlled file tools and local shell (1-col) -->
     <div class="glass-card rounded-2xl p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between group">
       <div>
         <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-6">
           <Shield class="w-6 h-6" />
         </div>
         <h3 class="text-xl font-bold text-white mb-3 tracking-tight">
-          四核安全沙箱工具链
+          受控文件工具与本地 Shell
         </h3>
         <p class="text-gray-400 text-sm leading-relaxed mb-6">
-          提供最符合编码范式的 4 大工具：<span class="font-mono text-white">read</span>（行范围截断）、<span class="font-mono text-white">write</span>、<span class="font-mono text-white">edit</span>（严格唯一匹配检测）、<span class="font-mono text-white">bash</span>（子进程凭证剥离与超时限制）。
+          提供 4 个编码工具：<span class="font-mono text-white">read</span>、<span class="font-mono text-white">write</span>、<span class="font-mono text-white">edit</span> 带工作区路径防护；<span class="font-mono text-white">bash</span> 具有当前用户权限，并提供超时与有界输出保护，仅应在可信项目中使用。
         </p>
       </div>
 

@@ -118,7 +118,7 @@ import { Keyboard, Command, Settings, ArrowDownUp } from 'lucide-astro';
           3. <span class="text-white">~/.config/rico/config.env</span> (用户级全局配置)
         </p>
         <div class="text-[11px] font-mono text-gray-500 border-t border-white/5 pt-2">
-          凭证防护：读取 API Key 后自动从子进程环境中剥离，杜绝任意脚本外泄。
+          凭证防护：OPENAI_API_KEY 不会传给子进程；bash 仍具有当前用户权限，应只在可信项目中使用。
         </div>
       </div>
     </div>

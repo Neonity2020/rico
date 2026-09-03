@@ -33,9 +33,7 @@ async fn main() -> Result<()> {
     // 选择运行模式:
     //   `--cli` / `-C`  → 保持原有的 stdin/stdout REPL
     //   `--tui` / `-t`  → 显式进入 TUI (默认)
-    let cli_mode = raw_args
-        .iter()
-        .any(|arg| arg == "--cli" || arg == "-C");
+    let cli_mode = raw_args.iter().any(|arg| arg == "--cli" || arg == "-C");
     let arguments: Vec<String> = raw_args
         .into_iter()
         .filter(|arg| arg != "--cli" && arg != "-C" && arg != "--tui" && arg != "-t")
@@ -64,6 +62,9 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| "20".to_owned())
         .parse::<usize>()
         .context("AGENT_MAX_STEPS 必须是正整数")?;
+    if max_steps == 0 {
+        anyhow::bail!("AGENT_MAX_STEPS 必须大于 0");
+    }
     let workspace = env::current_dir()?.canonicalize()?;
 
     let provider = OpenAiProvider::new(api_key, base_url, model);
@@ -159,10 +160,6 @@ CLI REPL 命令:
 }
 
 fn load_config() -> Result<()> {
-    if env::var_os("OPENAI_API_KEY").is_some() {
-        return Ok(());
-    }
-
     if let Some(path) = env::var_os("RICO_CONFIG") {
         let path = PathBuf::from(path);
         return dotenvy::from_path(&path)
@@ -173,19 +170,17 @@ fn load_config() -> Result<()> {
     for local_env in [".env.local", ".env"] {
         let path = PathBuf::from(local_env);
         if path.is_file() {
-            let _ = dotenvy::from_path(&path);
-            if env::var_os("OPENAI_API_KEY").is_some() {
-                return Ok(());
-            }
+            dotenvy::from_path(&path)
+                .with_context(|| format!("无法读取配置 {}", path.display()))?;
         }
     }
 
     if let Some(home) = env::var_os("HOME") {
         let path = PathBuf::from(home).join(".config/rico/config.env");
         if path.is_file() {
-            return dotenvy::from_path(&path)
+            dotenvy::from_path(&path)
                 .with_context(|| format!("无法读取配置 {}", path.display()))
-                .map(|_| ());
+                .map(|_| ())?;
         }
     }
 

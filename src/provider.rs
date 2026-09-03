@@ -186,7 +186,15 @@ impl OpenAiProvider {
                 }
             }
             if !buffer.is_empty() {
+                stream_complete |= event_completes_stream(&buffer);
                 process_event(&buffer, &mut content, &mut calls, &mut usage, on_text)?;
+            }
+            if !stream_complete {
+                if attempt == 0 && content.is_empty() && calls.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue 'attempts;
+                }
+                anyhow::bail!("流式响应在完成标记之前结束");
             }
 
             let tool_calls = (!calls.is_empty()).then(|| calls.into_values().collect());
@@ -370,6 +378,33 @@ fn process_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+        time::Duration as StdDuration,
+    };
+
+    fn serve_sse_once(body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(StdDuration::from_secs(2)))
+                .unwrap();
+            let mut request = [0_u8; 8 * 1024];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        format!("http://{address}")
+    }
 
     #[test]
     fn rebuilds_streamed_text_and_tool_calls() {
@@ -486,5 +521,22 @@ mod tests {
         assert!(!event_completes_stream(
             br#"data: {"choices":[{"finish_reason":null,"delta":{"content":"hi"}}]}"#
         ));
+        assert!(!event_completes_stream(
+            br#"data: {"choices":[{"delta":{"content":"truncated"}}]}"#
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_stream_that_ends_without_completion_marker() {
+        let base_url =
+            serve_sse_once("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n");
+        let provider = OpenAiProvider::new("test-key".into(), base_url, "test-model".into());
+        let mut streamed = String::new();
+        let error = provider
+            .chat_stream(&[], &[], &mut |text| streamed.push_str(text))
+            .await
+            .unwrap_err();
+        assert_eq!(streamed, "partial");
+        assert!(error.to_string().contains("完成标记"));
     }
 }

@@ -8,7 +8,7 @@ interface Props {
 
 const {
   title = "rico — 极致轻量的原生 Rust Coding Agent",
-  description = "纯 Rust 打造的极简 Coding Agent。毫秒级启动、内置四核安全沙箱与 Prompt Cache 智能复用，支持沉浸式 TUI 交互与全双工会话持久化。"
+  description = "纯 Rust 打造的极简 Coding Agent。内置工作区文件工具、本地 Shell、Prompt Cache 指标与可恢复的 TUI 会话。"
 } = Astro.props;
 ---
 
@@ -21,11 +21,15 @@ const {
     <meta name="generator" content={Astro.generator} />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#0B0D13" />
     
     <!-- OpenGraph / Social -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -33,6 +37,9 @@ const {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
   <body class="min-h-screen bg-[#0B0D13] text-[#F3F4F6] selection:bg-[#6EBEB4]/30 selection:text-white antialiased overflow-x-hidden">
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:rounded-lg focus:bg-[#6EBEB4] focus:px-4 focus:py-2 focus:text-[#0B0D13]">
+      跳到主要内容
+    </a>
     <div class="fixed inset-0 bg-grid-pattern pointer-events-none z-0"></div>
     <div class="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-96 bg-radial-glow pointer-events-none z-0"></div>
     

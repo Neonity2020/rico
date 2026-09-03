@@ -267,7 +267,12 @@ pub fn render_entry(entry: &Entry, width: usize) -> Vec<Line<'static>> {
     }
 }
 
-pub fn render_tool(name: &str, args: &str, result: Option<&str>, width: usize) -> Vec<Line<'static>> {
+pub fn render_tool(
+    name: &str,
+    args: &str,
+    result: Option<&str>,
+    width: usize,
+) -> Vec<Line<'static>> {
     let mut lines = vec![Line::raw("")];
     let summary = tool_summary(args);
     lines.push(
@@ -377,7 +382,11 @@ pub fn render_footer(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         String::new()
     };
     let left = format!("{} · {session}", app.cwd);
-    let right = format!("约 {} 词元{cache_info}{step} · {}", app.tokens, app.status.label());
+    let right = format!(
+        "约 {} 词元{cache_info}{step} · {}",
+        app.tokens,
+        app.status.label()
+    );
     let first = join_sides(&left, &right, area.width as usize);
     let hints = if app.busy {
         "Ctrl-C 退出 · PgUp/PgDn 滚动"

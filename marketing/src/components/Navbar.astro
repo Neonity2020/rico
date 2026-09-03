@@ -1,52 +1,86 @@
 ---
-import { Terminal, Github, Sparkles } from 'lucide-astro';
+import { Terminal, Github, Sparkles } from "lucide-astro";
 ---
 
-<header class="sticky top-0 z-50 w-full border-b border-white/5 bg-[#0B0D13]/80 backdrop-blur-xl transition-all">
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+<header
+  class="sticky top-0 z-50 w-full border-b border-white/5 bg-[#0B0D13]/80 backdrop-blur-xl transition-all"
+>
+  <div
+    class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2"
+  >
     <!-- Logo & Brand -->
     <div class="flex items-center gap-3">
       <a href="#" class="flex items-center gap-2.5 group">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-[#6EBEB4] to-[#3B82F6] p-[1px] shadow-lg shadow-[#6EBEB4]/20 group-hover:shadow-[#6EBEB4]/40 transition-shadow">
-          <div class="w-full h-full bg-[#0B0D13] rounded-[7px] flex items-center justify-center">
-            <span class="font-mono font-bold text-[#6EBEB4] text-lg tracking-tighter">ri</span>
+        <div
+          class="w-9 h-9 rounded-lg bg-linear-to-br from-[#6EBEB4] to-[#3B82F6] p-px shadow-lg shadow-[#6EBEB4]/20 group-hover:shadow-[#6EBEB4]/40 transition-shadow"
+        >
+          <div
+            class="w-full h-full bg-[#0B0D13] rounded-[7px] flex items-center justify-center"
+          >
+            <span
+              class="font-mono font-bold text-[#6EBEB4] text-lg tracking-tighter"
+              >ri</span
+            >
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <span class="font-bold text-xl tracking-tight text-white font-mono group-hover:text-[#6EBEB4] transition-colors">rico</span>
-          <span class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] border border-[#6EBEB4]/20">v0.1.0</span>
+          <span
+            class="font-bold text-xl tracking-tight text-white font-mono group-hover:text-[#6EBEB4] transition-colors"
+            >rico</span
+          >
+          <span
+            class="hidden sm:inline-flex text-[11px] font-mono px-2 py-0.5 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] border border-[#6EBEB4]/20"
+            >v0.1.0</span
+          >
         </div>
       </a>
     </div>
 
     <!-- Navigation Links -->
-    <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
-      <a href="#features" class="hover:text-[#6EBEB4] transition-colors">核心特性</a>
-      <a href="#demo" class="hover:text-[#6EBEB4] transition-colors">TUI 演示</a>
-      <a href="#cache" class="hover:text-[#6EBEB4] transition-colors flex items-center gap-1.5">
+    <nav
+      class="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300"
+    >
+      <a href="#features" class="hover:text-[#6EBEB4] transition-colors"
+        >核心特性</a
+      >
+      <a href="#demo" class="hover:text-[#6EBEB4] transition-colors">TUI 演示</a
+      >
+      <a
+        href="#cache"
+        class="hover:text-[#6EBEB4] transition-colors flex items-center gap-1.5"
+      >
         Prompt Cache
-        <span class="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-pulse"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-pulse"
+        ></span>
       </a>
-      <a href="#commands" class="hover:text-[#6EBEB4] transition-colors">命令手册</a>
-      <a href="#architecture" class="hover:text-[#6EBEB4] transition-colors">架构设计</a>
+      <a href="#commands" class="hover:text-[#6EBEB4] transition-colors"
+        >命令手册</a
+      >
+      <a href="#architecture" class="hover:text-[#6EBEB4] transition-colors"
+        >架构设计</a
+      >
     </nav>
 
     <!-- Actions -->
-    <div class="flex items-center gap-3">
-      <a 
-        href="https://github.com/Neonity2020/rico" 
-        target="_blank" 
-        rel="noopener noreferrer" 
-        class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-300 hover:text-white transition-all"
+    <div class="flex items-center gap-2 sm:gap-3">
+      <a
+        href="https://github.com/Neonity2020/rico"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="在 GitHub 查看 rico"
+        class="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-lg border border-white/10 hover:border-white/20 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-300 hover:text-white transition-all"
       >
         <Github class="w-4 h-4" />
         <span class="hidden sm:inline">GitHub</span>
-        <span class="text-[10px] px-1.5 py-0.2 rounded bg-white/10 text-gray-400">Star</span>
+        <span
+          class="hidden sm:inline text-[10px] px-1.5 py-0.2 rounded bg-white/10 text-gray-400"
+          >Star</span
+        >
       </a>
 
-      <a 
-        href="#quickstart" 
-        class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#6EBEB4] hover:bg-[#8FE2D8] text-[#0B0D13] text-xs font-semibold font-mono tracking-wide shadow-md shadow-[#6EBEB4]/20 hover:shadow-[#6EBEB4]/40 transition-all cursor-pointer"
+      <a
+        href="#quickstart"
+        class="inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-lg bg-[#6EBEB4] hover:bg-[#8FE2D8] text-[#0B0D13] text-xs font-semibold font-mono tracking-wide whitespace-nowrap shadow-md shadow-[#6EBEB4]/20 hover:shadow-[#6EBEB4]/40 transition-all cursor-pointer"
       >
         <Terminal class="w-3.5 h-3.5" />
         <span>快速上手</span>

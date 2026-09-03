@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::{
     provider::{Message, OpenAiProvider, TokenUsage},
@@ -56,8 +56,8 @@ impl Agent {
             max_steps,
             messages,
             session,
-            compact_threshold: env_usize("RICO_COMPACT_TOKENS", 200_000),
-            keep_recent_tokens: env_usize("RICO_KEEP_RECENT_TOKENS", 20_000),
+            compact_threshold: env_usize("RICO_COMPACT_TOKENS", 200_000)?,
+            keep_recent_tokens: env_usize("RICO_KEEP_RECENT_TOKENS", 20_000)?,
             event_sink: None,
         })
     }
@@ -161,7 +161,6 @@ impl Agent {
 
         let err = anyhow::anyhow!("达到最大工具循环次数 {}", self.max_steps)
             .context("agent 未能在限制内完成任务");
-        self.emit(AgentEvent::Error(format!("{err:#}")));
         Err(err)
     }
 
@@ -276,11 +275,19 @@ fn estimate_text_tokens(text: &str) -> usize {
     ascii_count.div_ceil(4) + (non_ascii_count * 5).div_ceil(4)
 }
 
-fn env_usize(name: &str, default: usize) -> usize {
-    env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
+fn env_usize(name: &str, default: usize) -> Result<usize> {
+    let value = match env::var(name) {
+        Ok(value) => value,
+        Err(env::VarError::NotPresent) => return Ok(default),
+        Err(error) => return Err(error).with_context(|| format!("无法读取环境变量 {name}")),
+    };
+    let parsed = value
+        .parse::<usize>()
+        .with_context(|| format!("{name} 必须是正整数"))?;
+    if parsed == 0 {
+        anyhow::bail!("{name} 必须大于 0");
+    }
+    Ok(parsed)
 }
 
 #[cfg(test)]

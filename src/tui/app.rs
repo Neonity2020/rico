@@ -11,10 +11,7 @@ use anyhow::Result;
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{
-    agent::AgentEvent,
-    session::CacheStats,
-};
+use crate::{agent::AgentEvent, session::CacheStats};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Philosophy {
@@ -287,7 +284,8 @@ impl App {
             self.cursor = 0;
             self.detach_history();
             self.entries.push(Entry::User(text));
-            self.entries.push(Entry::Info(self.cache_stats.summary_text()));
+            self.entries
+                .push(Entry::Info(self.cache_stats.summary_text()));
             self.transcript_scroll.scroll_to_end();
             return;
         }

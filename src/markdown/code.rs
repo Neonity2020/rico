@@ -164,7 +164,10 @@ pub fn render_code_block(code: &str, lang: Option<&str>, width: usize) -> Vec<Li
 
     // Code lines.
     for line_spans in highlighted {
-        let line_w: usize = line_spans.iter().map(|s| display_width(s.content.as_ref())).sum();
+        let line_w: usize = line_spans
+            .iter()
+            .map(|s| display_width(s.content.as_ref()))
+            .sum();
         if line_w <= inner_width {
             out.push(code_line(line_spans, line_w, inner_width, border_style));
         } else {

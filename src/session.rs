@@ -40,7 +40,8 @@ impl CacheStats {
     }
 
     pub fn uncached_prompt_tokens(&self) -> usize {
-        self.total_prompt_tokens.saturating_sub(self.total_cached_tokens)
+        self.total_prompt_tokens
+            .saturating_sub(self.total_cached_tokens)
     }
 
     pub fn total_tokens(&self) -> usize {
@@ -283,9 +284,7 @@ fn load_messages(path: &Path) -> Result<(Vec<Message>, CacheStats)> {
             }
         };
         match entry {
-            SessionEntry::Message {
-                message, usage, ..
-            } => {
+            SessionEntry::Message { message, usage, .. } => {
                 if let Some(u) = usage {
                     cache_stats.record_usage(&u);
                 }
@@ -382,7 +381,11 @@ mod tests {
 
         // 模拟进程被强杀写入了半截残缺 JSON
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
-        writeln!(file, r#"{{"type":"message","timestamp":12345,"message":{{"role":"user""#).unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"message","timestamp":12345,"message":{{"role":"user""#
+        )
+        .unwrap();
 
         let (restored, _) = load_messages(&path).unwrap();
         assert_eq!(restored.len(), 1);

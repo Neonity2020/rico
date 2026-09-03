@@ -17,7 +17,7 @@ import { Play, RotateCcw, Sparkles } from "lucide-astro";
       原生 TUI 交互体验
     </h2>
     <p class="text-gray-400 text-sm sm:text-base max-w-xl mx-auto font-normal">
-      在纯 Rust + ratatui 驱动的控制台中，享受对话流式直出、工具链安全沙箱与实时
+      在纯 Rust + ratatui 驱动的控制台中，使用对话流式输出、工作区文件工具与实时
       Prompt Cache 命中洞察。
     </p>
   </div>
@@ -112,9 +112,15 @@ import { Play, RotateCcw, Sparkles } from "lucide-astro";
           <span>执行结果</span>
         </div>
 
-        <div class="text-xs sm:text-sm text-[#8FE2D8] font-mono overflow-x-auto leading-relaxed">
-          <div class="inline-block min-w-full sm:min-w-[620px] bg-[#0B0D13]/90 rounded-lg border border-[#6EBEB4]/40 p-3 shadow-inner">
-            <div class="flex justify-between items-center text-[#6EBEB4] text-xs font-semibold pb-1.5 mb-1.5 border-b border-[#6EBEB4]/20">
+        <div
+          class="text-xs sm:text-sm text-[#8FE2D8] font-mono overflow-x-auto leading-relaxed"
+        >
+          <div
+            class="inline-block min-w-full sm:min-w-155 bg-[#0B0D13]/90 rounded-lg border border-[#6EBEB4]/40 p-3 shadow-inner"
+          >
+            <div
+              class="flex justify-between items-center text-[#6EBEB4] text-xs font-semibold pb-1.5 mb-1.5 border-b border-[#6EBEB4]/20"
+            >
               <span class="flex items-center gap-1.5">
                 <span class="text-gray-500">┌──</span>
                 <span>架构拆分一览</span>
@@ -125,24 +131,67 @@ import { Play, RotateCcw, Sparkles } from "lucide-astro";
               </span>
             </div>
             <div class="space-y-1">
-              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
-                <span class="text-white">│&nbsp; ├── provider.rs&nbsp;&nbsp;<span class="text-[#6EBEB4]">490 行</span></span>
-                <span class="text-gray-300">TokenUsage 与 Prompt Cache 解析&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              <div
+                class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors"
+              >
+                <span class="text-white"
+                  >│&nbsp; ├── provider.rs&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">490 行</span
+                  ></span
+                >
+                <span class="text-gray-300"
+                  >TokenUsage 与 Prompt Cache 解析&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">│</span
+                  ></span
+                >
               </div>
-              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
-                <span class="text-white">│&nbsp; ├── session.rs&nbsp;&nbsp;&nbsp;<span class="text-[#6EBEB4]">430 行</span></span>
-                <span class="text-gray-300">会话持久化与 CacheStats 累加&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              <div
+                class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors"
+              >
+                <span class="text-white"
+                  >│&nbsp; ├── session.rs&nbsp;&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">430 行</span
+                  ></span
+                >
+                <span class="text-gray-300"
+                  >会话持久化与 CacheStats 累加&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">│</span
+                  ></span
+                >
               </div>
-              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
-                <span class="text-white">│&nbsp; ├── markdown/&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-[#6EBEB4]">364 行</span></span>
-                <span class="text-gray-300">GFM 表格与代码框全宽精密对齐&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              <div
+                class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors"
+              >
+                <span class="text-white"
+                  >│&nbsp; ├── markdown/&nbsp;&nbsp;&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">364 行</span
+                  ></span
+                >
+                <span class="text-gray-300"
+                  >GFM 表格与代码框全宽精密对齐&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">│</span
+                  ></span
+                >
               </div>
-              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
-                <span class="text-white">│&nbsp; └── tui/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-[#6EBEB4]">471 行</span></span>
-                <span class="text-gray-300">/cache 指令截流与实时 CH 标签渲染&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              <div
+                class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors"
+              >
+                <span class="text-white"
+                  >│&nbsp; └──
+                  tui/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">471 行</span
+                  ></span
+                >
+                <span class="text-gray-300"
+                  >/cache 指令截流与实时 CH 标签渲染&nbsp;&nbsp;<span
+                    class="text-[#6EBEB4]">│</span
+                  ></span
+                >
               </div>
             </div>
-            <div class="flex justify-between items-center text-gray-500 border-t border-white/10 pt-1.5 mt-1.5 text-[11px]">
+            <div
+              class="flex justify-between items-center text-gray-500 border-t border-white/10 pt-1.5 mt-1.5 text-[11px]"
+            >
               <span>└── 模块拆分完毕</span>
               <span>44 passed ──┘</span>
             </div>
