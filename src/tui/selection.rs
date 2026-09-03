@@ -1,9 +1,9 @@
 //! Mouse transcript selection, highlight rendering, and clipboard integration.
 
-use std::{
-    io::{stdout, Write},
-    process::{Command, Stdio},
-};
+use std::io::{stdout, Write};
+
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 
 use base64::Engine;
 use ratatui::style::Modifier;
