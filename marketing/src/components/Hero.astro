@@ -1,0 +1,114 @@
+---
+import { Terminal, Copy, Check, Zap, Cpu, Sparkles, ShieldCheck } from 'lucide-astro';
+---
+
+<section class="relative pt-20 pb-16 md:pt-28 md:pb-24 px-4 sm:px-6 lg:px-8 text-center max-w-5xl mx-auto">
+  <!-- Top Announcement Badge -->
+  <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-[#6EBEB4]/30 bg-[#6EBEB4]/10 text-xs font-mono text-[#8FE2D8] mb-8 shadow-sm shadow-[#6EBEB4]/20 hover:border-[#6EBEB4]/50 transition-colors">
+    <Sparkles class="w-3.5 h-3.5 text-[#6EBEB4] animate-pulse" />
+    <span>原生 Rust 极简无框架架构 · 深度适配 MiniMax M3</span>
+    <span class="w-1 h-1 rounded-full bg-[#6EBEB4]"></span>
+    <span class="text-white/70">Prompt Cache 节省 70%+</span>
+  </div>
+
+  <!-- Primary Headline -->
+  <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white mb-6 leading-[1.15]">
+    极致轻量的原生 <br class="hidden sm:inline" />
+    <span class="bg-gradient-to-r from-[#6EBEB4] via-[#8FE2D8] to-[#3B82F6] bg-clip-text text-transparent">
+      Rust Coding Agent
+    </span>
+  </h1>
+
+  <!-- Secondary Description -->
+  <p class="max-w-2xl mx-auto text-base sm:text-lg text-gray-400 mb-10 leading-relaxed font-normal">
+    毫秒必争，原生终端。无外部笨重 SDK，内置四核严格隔离沙箱与智能前缀缓存解析。让每一次代码重构与指令调试都像运行本地命令一样纯粹、敏捷。
+  </p>
+
+  <!-- Interactive Terminal Install Snippet -->
+  <div id="quickstart" class="max-w-xl mx-auto mb-12">
+    <div class="glass-card rounded-xl p-2.5 flex items-center justify-between border border-white/10 shadow-2xl relative group">
+      <div class="flex items-center gap-3 pl-3 overflow-x-auto text-left font-mono text-xs sm:text-sm text-gray-200">
+        <span class="text-[#6EBEB4] select-none font-bold">$</span>
+        <code id="install-cmd" class="text-gray-100 whitespace-nowrap">cargo install --git https://github.com/Neonity2020/rico</code>
+      </div>
+
+      <button 
+        id="copy-btn"
+        class="ml-2 flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-mono text-gray-300 hover:text-white transition-all active:scale-95 cursor-pointer shrink-0"
+        title="复制命令"
+      >
+        <Copy id="copy-icon" class="w-3.5 h-3.5 text-gray-400" />
+        <Check id="check-icon" class="w-3.5 h-3.5 text-[#10B981] hidden" />
+        <span id="copy-text">复制</span>
+      </button>
+    </div>
+    <div class="flex items-center justify-center gap-6 mt-3 text-[11px] font-mono text-gray-500">
+      <span>单二进制文件交付</span>
+      <span>•</span>
+      <span>零 Python / Node.js 运行时依赖</span>
+      <span>•</span>
+      <span>macOS / Linux 开箱即用</span>
+    </div>
+  </div>
+
+  <!-- Key Metric Badges -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mx-auto">
+    <div class="glass-card rounded-xl p-4 text-center border border-white/5">
+      <div class="flex items-center justify-center gap-1.5 text-xs font-mono text-gray-400 mb-1">
+        <Zap class="w-3.5 h-3.5 text-amber-400" />
+        <span>冷启耗时</span>
+      </div>
+      <div class="text-xl sm:text-2xl font-bold font-mono text-white">&lt; 15<span class="text-xs text-gray-400 font-normal">ms</span></div>
+    </div>
+
+    <div class="glass-card rounded-xl p-4 text-center border border-white/5">
+      <div class="flex items-center justify-center gap-1.5 text-xs font-mono text-gray-400 mb-1">
+        <Cpu class="w-3.5 h-3.5 text-[#6EBEB4]" />
+        <span>内存占用</span>
+      </div>
+      <div class="text-xl sm:text-2xl font-bold font-mono text-white">~18<span class="text-xs text-gray-400 font-normal">MB</span></div>
+    </div>
+
+    <div class="glass-card rounded-xl p-4 text-center border border-white/5">
+      <div class="flex items-center justify-center gap-1.5 text-xs font-mono text-gray-400 mb-1">
+        <Sparkles class="w-3.5 h-3.5 text-emerald-400" />
+        <span>缓存命中</span>
+      </div>
+      <div class="text-xl sm:text-2xl font-bold font-mono text-emerald-400">85%+</div>
+    </div>
+
+    <div class="glass-card rounded-xl p-4 text-center border border-white/5">
+      <div class="flex items-center justify-center gap-1.5 text-xs font-mono text-gray-400 mb-1">
+        <ShieldCheck class="w-3.5 h-3.5 text-blue-400" />
+        <span>安全沙箱</span>
+      </div>
+      <div class="text-xl sm:text-2xl font-bold font-mono text-white">4<span class="text-xs text-gray-400 font-normal">核心工具</span></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const copyBtn = document.getElementById('copy-btn');
+  const copyIcon = document.getElementById('copy-icon');
+  const checkIcon = document.getElementById('check-icon');
+  const copyText = document.getElementById('copy-text');
+  const installCmd = document.getElementById('install-cmd');
+
+  copyBtn?.addEventListener('click', async () => {
+    if (!installCmd) return;
+    try {
+      await navigator.clipboard.writeText(installCmd.innerText);
+      copyIcon?.classList.add('hidden');
+      checkIcon?.classList.remove('hidden');
+      if (copyText) copyText.innerText = '已复制!';
+      
+      setTimeout(() => {
+        copyIcon?.classList.remove('hidden');
+        checkIcon?.classList.add('hidden');
+        if (copyText) copyText.innerText = '复制';
+      }, 2000);
+    } catch (err) {
+      console.error('复制失败', err);
+    }
+  });
+</script>

@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_cli(mut agent: Agent, initial_task: String) -> Result<()> {
-    println!("rico coding agent（/clear 清空，/session 查看会话，/exit 退出）");
+    println!("rico coding agent（/clear 清空，/session 查看会话，/cache 查看缓存，/exit 退出）");
     if let Some(path) = agent.session_path() {
         println!("session: {}", path.display());
     }
@@ -101,8 +101,17 @@ async fn run_cli(mut agent: Agent, initial_task: String) -> Result<()> {
                 agent.clear_history()?;
                 println!("上下文已清空。");
             }
+            "/cache" | "/stats" => {
+                println!("{}", agent.cache_stats().summary_text());
+            }
             "/session" => match agent.session_path() {
-                Some(path) => println!("{}", path.display()),
+                Some(path) => {
+                    println!("会话文件: {}", path.display());
+                    let stats = agent.cache_stats();
+                    if stats.requests_count > 0 {
+                        println!("{}", stats.summary_text());
+                    }
+                }
                 None => println!("当前为临时会话"),
             },
             _ => run_turn(&mut agent, input.to_owned()).await,
@@ -135,7 +144,8 @@ TUI 快捷键:
 
 CLI REPL 命令:
   /clear          清空对话上下文，开始新会话
-  /session        查看当前 JSONL 会话文件路径
+  /session        查看当前 JSONL 会话文件路径及缓存命中统计
+  /cache          查询当前会话的 Prompt 缓存命中统计与命中率
   /exit, /quit    退出程序 (或按 Ctrl-D)
 
 配置:

@@ -1,0 +1,42 @@
+---
+import { Github, Terminal, Heart } from 'lucide-astro';
+---
+
+<footer class="mt-auto border-t border-white/5 bg-[#0B0D13]/90 pt-16 pb-12 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-7xl mx-auto flex flex-col items-center justify-between gap-8 md:flex-row">
+    <!-- Brand Info -->
+    <div class="flex flex-col items-center md:items-start gap-2">
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-[#6EBEB4] to-[#3B82F6] p-[1px]">
+          <div class="w-full h-full bg-[#0B0D13] rounded-[7px] flex items-center justify-center">
+            <span class="font-mono font-bold text-[#6EBEB4] text-xs">ri</span>
+          </div>
+        </div>
+        <span class="font-bold text-lg text-white font-mono">rico</span>
+      </div>
+      <p class="text-xs text-gray-500 font-mono text-center md:text-left mt-1">
+        最小化的 Rust Coding Agent · 毫秒必争，原生终端。
+      </p>
+    </div>
+
+    <!-- Philosophy Tagline -->
+    <div class="text-center font-mono text-xs text-gray-400 bg-white/5 px-4 py-2 rounded-xl border border-white/5 max-w-md">
+      <span class="text-[#6EBEB4] font-semibold">DRY &amp; KISS</span>: 代码首先服务于读者，其次才交给机器执行。
+    </div>
+
+    <!-- Links & Copyright -->
+    <div class="flex items-center gap-6 text-xs text-gray-500 font-mono">
+      <a 
+        href="https://github.com/Neonity2020/rico" 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        class="flex items-center gap-1.5 hover:text-white transition-colors"
+      >
+        <Github class="w-4 h-4" />
+        <span>GitHub</span>
+      </a>
+      <span>MIT License</span>
+      <span>© 2026 rico</span>
+    </div>
+  </div>
+</footer>

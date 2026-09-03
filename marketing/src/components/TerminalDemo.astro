@@ -1,0 +1,199 @@
+---
+import { Play, RotateCcw, Sparkles } from "lucide-astro";
+---
+
+<section
+  id="demo"
+  class="py-12 md:py-20 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto"
+>
+  <div class="text-center mb-8">
+    <div
+      class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] text-xs font-mono font-medium mb-3 border border-[#6EBEB4]/20"
+    >
+      <Sparkles class="w-3.5 h-3.5" />
+      <span>沉浸式终端会话仿真</span>
+    </div>
+    <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-3">
+      原生 TUI 交互体验
+    </h2>
+    <p class="text-gray-400 text-sm sm:text-base max-w-xl mx-auto font-normal">
+      在纯 Rust + ratatui 驱动的控制台中，享受对话流式直出、工具链安全沙箱与实时
+      Prompt Cache 命中洞察。
+    </p>
+  </div>
+
+  <!-- Terminal Window Container -->
+  <div
+    class="rounded-2xl border border-white/10 bg-[#0F121C] shadow-[0_0_60px_-15px_rgba(110,190,180,0.15)] overflow-hidden font-mono text-xs sm:text-sm"
+  >
+    <!-- Terminal Titlebar -->
+    <div
+      class="h-10 bg-[#141824] px-4 border-b border-white/5 flex items-center justify-between select-none"
+    >
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-[#FF5F56] inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-[#FFBD2E] inline-block"></span>
+        <span class="w-3 h-3 rounded-full bg-[#27C93F] inline-block"></span>
+      </div>
+
+      <div
+        class="text-xs text-gray-400 font-medium tracking-wide flex items-center gap-2"
+      >
+        <span>rico — MiniMax-M3</span>
+        <span class="text-white/20">|</span>
+        <span class="text-[#10B981] font-mono font-semibold">CH85.2%</span>
+      </div>
+
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        <span class="hidden sm:inline">Ctrl-C 退出</span>
+      </div>
+    </div>
+
+    <!-- Terminal Screen Body -->
+    <div
+      class="p-4 sm:p-6 space-y-4 text-gray-300 leading-relaxed overflow-x-auto min-h-105"
+    >
+      <!-- 1. User Message -->
+      <div class="rounded-lg bg-[#30343D] p-3 text-white">
+        <div
+          class="text-[11px] text-[#6EBEB4] font-semibold mb-1 flex items-center gap-1.5"
+        >
+          <span>USER</span>
+          <span class="text-gray-500">10:42:01</span>
+        </div>
+        <p class="font-sans text-sm">
+          实现大模型 Prompt Cache 命中统计与查询机制，并在 TUI
+          底栏中实时展示命中率
+        </p>
+      </div>
+
+      <!-- 2. Assistant Thinking Block (Folded/Subtle) -->
+      <div
+        class="pl-3 border-l-2 border-[#6EBEB4]/40 text-gray-400 italic text-xs space-y-1"
+      >
+        <div
+          class="text-[#6EBEB4] not-italic font-semibold flex items-center gap-1"
+        >
+          <span>思考过程 (Reasoning)</span>
+          <span
+            class="text-[10px] bg-white/5 px-1.5 py-0.5 rounded text-gray-400"
+            >已折叠 12 步思考</span
+          >
+        </div>
+        <p>1. 在 provider.rs 的 stream_options 中增加 include_usage: true；</p>
+        <p>
+          2. 解析 OpenAI prompt_tokens_details.cached_tokens 与 DeepSeek
+          prompt_cache_hit_tokens；
+        </p>
+        <p>3. 在 session 模块维护累积 CacheStats 并支持会话断点恢复；</p>
+      </div>
+
+      <!-- 3. Tool Execution Notification -->
+      <div
+        class="rounded-lg bg-[#262A31] p-2.5 text-xs flex items-center justify-between border border-white/5"
+      >
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-[#6EBEB4] animate-pulse"></span>
+          <span class="font-bold text-white">edit</span>
+          <span class="text-gray-400">src/provider.rs (解析 SSE usage 块)</span>
+        </div>
+        <span class="text-[#10B981] font-semibold text-[11px]"
+          >✓ 完成替换 (1 处)</span
+        >
+      </div>
+
+      <!-- 4. Assistant Formatted Output with Clean Box Frame -->
+      <div class="space-y-2">
+        <div
+          class="text-[11px] text-gray-400 font-semibold flex items-center gap-1.5"
+        >
+          <span class="text-[#8FE2D8]">rico</span>
+          <span class="text-gray-600">·</span>
+          <span>执行结果</span>
+        </div>
+
+        <div class="text-xs sm:text-sm text-[#8FE2D8] font-mono overflow-x-auto leading-relaxed">
+          <div class="inline-block min-w-full sm:min-w-[620px] bg-[#0B0D13]/90 rounded-lg border border-[#6EBEB4]/40 p-3 shadow-inner">
+            <div class="flex justify-between items-center text-[#6EBEB4] text-xs font-semibold pb-1.5 mb-1.5 border-b border-[#6EBEB4]/20">
+              <span class="flex items-center gap-1.5">
+                <span class="text-gray-500">┌──</span>
+                <span>架构拆分一览</span>
+              </span>
+              <span class="flex items-center gap-1.5 text-gray-400 text-[11px]">
+                <span>rico v0.1.0</span>
+                <span class="text-gray-500">──┐</span>
+              </span>
+            </div>
+            <div class="space-y-1">
+              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
+                <span class="text-white">│&nbsp; ├── provider.rs&nbsp;&nbsp;<span class="text-[#6EBEB4]">490 行</span></span>
+                <span class="text-gray-300">TokenUsage 与 Prompt Cache 解析&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              </div>
+              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
+                <span class="text-white">│&nbsp; ├── session.rs&nbsp;&nbsp;&nbsp;<span class="text-[#6EBEB4]">430 行</span></span>
+                <span class="text-gray-300">会话持久化与 CacheStats 累加&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              </div>
+              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
+                <span class="text-white">│&nbsp; ├── markdown/&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-[#6EBEB4]">364 行</span></span>
+                <span class="text-gray-300">GFM 表格与代码框全宽精密对齐&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              </div>
+              <div class="flex justify-between items-center px-1 py-0.5 rounded hover:bg-white/5 transition-colors">
+                <span class="text-white">│&nbsp; └── tui/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="text-[#6EBEB4]">471 行</span></span>
+                <span class="text-gray-300">/cache 指令截流与实时 CH 标签渲染&nbsp;&nbsp;<span class="text-[#6EBEB4]">│</span></span>
+              </div>
+            </div>
+            <div class="flex justify-between items-center text-gray-500 border-t border-white/10 pt-1.5 mt-1.5 text-[11px]">
+              <span>└── 模块拆分完毕</span>
+              <span>44 passed ──┘</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Prompt Cache Stats Card Bubble -->
+      <div
+        class="rounded-lg border border-[#6EBEB4]/20 bg-[#6EBEB4]/5 p-3.5 text-xs text-gray-200"
+      >
+        <div class="flex items-center justify-between mb-2">
+          <span class="font-semibold text-[#6EBEB4] flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#6EBEB4]"></span>
+            Prompt 缓存命中统计 (Cache Stats)
+          </span>
+          <span
+            class="px-2 py-0.5 rounded bg-[#10B981]/20 text-[#10B981] font-bold text-[11px]"
+          >
+            总体命中率 85.2%
+          </span>
+        </div>
+        <div
+          class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]"
+        >
+          <div>请求次数: <span class="text-white font-bold">5 次</span></div>
+          <div>
+            缓存命中: <span class="text-emerald-400 font-bold">4 次</span>
+          </div>
+          <div>
+            命中词元: <span class="text-emerald-400 font-bold">14,280</span>
+          </div>
+          <div>未命中词元: <span class="text-gray-400">2,480</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal Footer Statusline -->
+    <div
+      class="bg-[#141824] px-4 py-2 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-gray-400 font-mono gap-1"
+    >
+      <div class="flex items-center gap-2 truncate">
+        <span class="text-gray-300">~/workspace/ri</span>
+        <span class="text-gray-600">·</span>
+        <span class="text-gray-400">session.jsonl</span>
+      </div>
+      <div class="flex items-center gap-3 text-right">
+        <span>约 1,234 词元</span>
+        <span class="text-emerald-400 font-semibold">· CH85.2%</span>
+        <span class="text-gray-500">· 就绪</span>
+      </div>
+    </div>
+  </div>
+</section>

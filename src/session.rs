@@ -9,7 +9,76 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::provider::Message;
+use crate::provider::{Message, TokenUsage};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct CacheStats {
+    pub total_prompt_tokens: usize,
+    pub total_completion_tokens: usize,
+    pub total_cached_tokens: usize,
+    pub latest_prompt_tokens: usize,
+    pub latest_cached_tokens: usize,
+    pub requests_count: usize,
+    pub cache_hit_requests_count: usize,
+}
+
+impl CacheStats {
+    pub fn overall_hit_rate(&self) -> f64 {
+        if self.total_prompt_tokens == 0 {
+            0.0
+        } else {
+            (self.total_cached_tokens as f64 / self.total_prompt_tokens as f64) * 100.0
+        }
+    }
+
+    pub fn latest_hit_rate(&self) -> f64 {
+        if self.latest_prompt_tokens == 0 {
+            0.0
+        } else {
+            (self.latest_cached_tokens as f64 / self.latest_prompt_tokens as f64) * 100.0
+        }
+    }
+
+    pub fn uncached_prompt_tokens(&self) -> usize {
+        self.total_prompt_tokens.saturating_sub(self.total_cached_tokens)
+    }
+
+    pub fn total_tokens(&self) -> usize {
+        self.total_prompt_tokens + self.total_completion_tokens
+    }
+
+    pub fn record_usage(&mut self, usage: &TokenUsage) {
+        self.requests_count += 1;
+        self.total_prompt_tokens += usage.prompt_tokens;
+        self.total_completion_tokens += usage.completion_tokens;
+        self.total_cached_tokens += usage.cached_tokens;
+        self.latest_prompt_tokens = usage.prompt_tokens;
+        self.latest_cached_tokens = usage.cached_tokens;
+        if usage.cached_tokens > 0 {
+            self.cache_hit_requests_count += 1;
+        }
+    }
+
+    pub fn summary_text(&self) -> String {
+        if self.requests_count == 0 {
+            return "暂无模型请求的缓存命中记录。".to_string();
+        }
+        format!(
+            "Prompt 缓存命中统计：\n  总请求次数: {} 次（命中 {} 次）\n  输入词元 (Prompt): {}\n  ├─ 命中缓存 (Cached): {} ({:.1}%)\n  └─ 未命中 (Uncached): {}\n  输出词元 (Completion): {}\n  总计消耗 (Total): {}\n  最近一轮命中率: {:.1}% ({} / {})",
+            self.requests_count,
+            self.cache_hit_requests_count,
+            self.total_prompt_tokens,
+            self.total_cached_tokens,
+            self.overall_hit_rate(),
+            self.uncached_prompt_tokens(),
+            self.total_completion_tokens,
+            self.total_tokens(),
+            self.latest_hit_rate(),
+            self.latest_cached_tokens,
+            self.latest_prompt_tokens
+        )
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -22,6 +91,8 @@ enum SessionEntry {
     Message {
         timestamp: u64,
         message: Message,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<TokenUsage>,
     },
     Compaction {
         timestamp: u64,
@@ -36,6 +107,7 @@ enum SessionEntry {
 
 pub struct SessionStore {
     path: Option<PathBuf>,
+    cache_stats: CacheStats,
 }
 
 impl SessionStore {
@@ -45,13 +117,22 @@ impl SessionStore {
 
         if resume {
             if let Some(path) = latest_session(&directory)? {
-                let messages = load_messages(&path)?;
-                return Ok((Self { path: Some(path) }, messages));
+                let (messages, cache_stats) = load_messages(&path)?;
+                return Ok((
+                    Self {
+                        path: Some(path),
+                        cache_stats,
+                    },
+                    messages,
+                ));
             }
         }
 
         let path = directory.join(format!("{}-{}.jsonl", now_nanos(), std::process::id()));
-        let store = Self { path: Some(path) };
+        let mut store = Self {
+            path: Some(path),
+            cache_stats: CacheStats::default(),
+        };
         store.append(&SessionEntry::Header {
             version: 1,
             workspace: workspace.display().to_string(),
@@ -63,17 +144,36 @@ impl SessionStore {
 
     #[cfg(test)]
     pub fn ephemeral() -> Self {
-        Self { path: None }
+        Self {
+            path: None,
+            cache_stats: CacheStats::default(),
+        }
     }
 
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
 
-    pub fn append_message(&self, message: &Message) -> Result<()> {
+    pub fn cache_stats(&self) -> CacheStats {
+        self.cache_stats
+    }
+
+    pub fn append_message(&mut self, message: &Message) -> Result<()> {
+        self.append_message_with_usage(message, None)
+    }
+
+    pub fn append_message_with_usage(
+        &mut self,
+        message: &Message,
+        usage: Option<TokenUsage>,
+    ) -> Result<()> {
+        if let Some(usage_info) = usage {
+            self.cache_stats.record_usage(&usage_info);
+        }
         self.append(&SessionEntry::Message {
             timestamp: now_millis(),
             message: message.clone(),
+            usage,
         })
     }
 
@@ -91,7 +191,8 @@ impl SessionStore {
         })
     }
 
-    pub fn append_reset(&self) -> Result<()> {
+    pub fn append_reset(&mut self) -> Result<()> {
+        self.cache_stats = CacheStats::default();
         self.append(&SessionEntry::Reset {
             timestamp: now_millis(),
         })
@@ -156,9 +257,10 @@ fn latest_session(directory: &Path) -> Result<Option<PathBuf>> {
     Ok(entries.pop())
 }
 
-fn load_messages(path: &Path) -> Result<Vec<Message>> {
+fn load_messages(path: &Path) -> Result<(Vec<Message>, CacheStats)> {
     let file = fs::File::open(path)?;
     let mut messages = Vec::new();
+    let mut cache_stats = CacheStats::default();
     let lines = BufReader::new(file)
         .lines()
         .collect::<std::io::Result<Vec<_>>>()?;
@@ -181,15 +283,25 @@ fn load_messages(path: &Path) -> Result<Vec<Message>> {
             }
         };
         match entry {
-            SessionEntry::Message { message, .. } => messages.push(message),
+            SessionEntry::Message {
+                message, usage, ..
+            } => {
+                if let Some(u) = usage {
+                    cache_stats.record_usage(&u);
+                }
+                messages.push(message);
+            }
             SessionEntry::Compaction {
                 active_messages, ..
             } => messages = active_messages,
-            SessionEntry::Reset { .. } => messages.clear(),
+            SessionEntry::Reset { .. } => {
+                messages.clear();
+                cache_stats = CacheStats::default();
+            }
             SessionEntry::Header { .. } => {}
         }
     }
-    Ok(messages)
+    Ok((messages, cache_stats))
 }
 
 fn now_millis() -> u64 {
@@ -237,8 +349,9 @@ mod tests {
     #[test]
     fn compaction_snapshot_restores_active_context() {
         let path = temp_file();
-        let store = SessionStore {
+        let mut store = SessionStore {
             path: Some(path.clone()),
+            cache_stats: CacheStats::default(),
         };
         let system = Message::text("system", "system");
         let old = Message::text("user", "old");
@@ -250,7 +363,7 @@ mod tests {
             .unwrap();
         store.append_message(&Message::text("user", "new")).unwrap();
 
-        let restored = load_messages(&path).unwrap();
+        let (restored, _) = load_messages(&path).unwrap();
         assert_eq!(restored.len(), 3);
         assert_eq!(restored[1].content.as_deref(), Some("summary"));
         assert_eq!(restored[2].content.as_deref(), Some("new"));
@@ -260,8 +373,9 @@ mod tests {
     #[test]
     fn ignores_corrupted_trailing_line() {
         let path = temp_file();
-        let store = SessionStore {
+        let mut store = SessionStore {
             path: Some(path.clone()),
+            cache_stats: CacheStats::default(),
         };
         let system = Message::text("system", "system");
         store.append_message(&system).unwrap();
@@ -270,9 +384,47 @@ mod tests {
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
         writeln!(file, r#"{{"type":"message","timestamp":12345,"message":{{"role":"user""#).unwrap();
 
-        let restored = load_messages(&path).unwrap();
+        let (restored, _) = load_messages(&path).unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].content.as_deref(), Some("system"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn cache_stats_records_and_restores_from_file() {
+        let path = temp_file();
+        let mut store = SessionStore {
+            path: Some(path.clone()),
+            cache_stats: CacheStats::default(),
+        };
+
+        let system = Message::text("system", "prompt");
+        store.append_message(&system).unwrap();
+
+        let assistant = Message::text("assistant", "answer");
+        let usage = TokenUsage {
+            prompt_tokens: 1000,
+            completion_tokens: 50,
+            total_tokens: 1050,
+            cached_tokens: 800,
+        };
+        store
+            .append_message_with_usage(&assistant, Some(usage))
+            .unwrap();
+
+        assert_eq!(store.cache_stats().total_prompt_tokens, 1000);
+        assert_eq!(store.cache_stats().total_cached_tokens, 800);
+        assert_eq!(store.cache_stats().requests_count, 1);
+        assert_eq!(store.cache_stats().cache_hit_requests_count, 1);
+        assert_eq!(store.cache_stats().overall_hit_rate(), 80.0);
+
+        // 验证重新从文件加载能够完整恢复统计数据
+        let (messages, loaded_stats) = load_messages(&path).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(loaded_stats.total_prompt_tokens, 1000);
+        assert_eq!(loaded_stats.total_cached_tokens, 800);
+        assert_eq!(loaded_stats.overall_hit_rate(), 80.0);
+
         let _ = fs::remove_file(path);
     }
 }

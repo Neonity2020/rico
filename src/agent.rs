@@ -3,8 +3,8 @@ use std::{env, path::PathBuf};
 use anyhow::Result;
 
 use crate::{
-    provider::{Message, OpenAiProvider},
-    session::SessionStore,
+    provider::{Message, OpenAiProvider, TokenUsage},
+    session::{CacheStats, SessionStore},
     tools::ToolRegistry,
 };
 
@@ -23,6 +23,7 @@ pub enum AgentEvent {
     Compacting,
     Complete,
     Error(String),
+    Usage(TokenUsage),
 }
 
 pub struct Agent {
@@ -44,7 +45,7 @@ impl Agent {
         resume: bool,
     ) -> Result<Self> {
         let system = Message::text("system", SYSTEM_PROMPT);
-        let (session, mut messages) = SessionStore::open(&workspace, resume, system.clone())?;
+        let (mut session, mut messages) = SessionStore::open(&workspace, resume, system.clone())?;
         if messages.is_empty() {
             messages.push(system.clone());
             session.append_message(&system)?;
@@ -90,6 +91,10 @@ impl Agent {
         self.session.path()
     }
 
+    pub fn cache_stats(&self) -> CacheStats {
+        self.session.cache_stats()
+    }
+
     pub fn estimated_tokens(&self) -> usize {
         estimate_tokens(&self.messages)
     }
@@ -115,13 +120,16 @@ impl Agent {
                 current: step,
                 total: self.max_steps,
             });
-            let assistant = self
+            let (assistant, usage) = self
                 .provider
                 .chat_stream(&self.messages, &definitions, &mut on_text)
                 .await?;
+            if let Some(usage_info) = usage {
+                self.emit(AgentEvent::Usage(usage_info));
+            }
             let calls = assistant.tool_calls.clone().unwrap_or_default();
             let final_text = assistant.content.clone().unwrap_or_default();
-            self.push_message(assistant)?;
+            self.push_message_with_usage(assistant, usage)?;
 
             if calls.is_empty() {
                 self.emit(AgentEvent::Complete);
@@ -158,7 +166,15 @@ impl Agent {
     }
 
     fn push_message(&mut self, message: Message) -> Result<()> {
-        self.session.append_message(&message)?;
+        self.push_message_with_usage(message, None)
+    }
+
+    fn push_message_with_usage(
+        &mut self,
+        message: Message,
+        usage: Option<TokenUsage>,
+    ) -> Result<()> {
+        self.session.append_message_with_usage(&message, usage)?;
         self.messages.push(message);
         Ok(())
     }

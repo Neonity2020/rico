@@ -1,0 +1,132 @@
+---
+import { Zap, Sparkles, Shield, Database, Terminal, ArrowRight, Activity } from 'lucide-astro';
+---
+
+<section id="features" class="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+  <div class="text-center mb-16">
+    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] text-xs font-mono font-medium mb-3 border border-[#6EBEB4]/20">
+      <Zap class="w-3.5 h-3.5" />
+      <span>架构设计原则</span>
+    </div>
+    <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-4">
+      为工程实效而生的四大核心柱石
+    </h2>
+    <p class="text-gray-400 text-base sm:text-lg max-w-2xl mx-auto font-normal">
+      拒绝过度包装与黑盒依赖。每一行代码服务于快速响应与可控交付。
+    </p>
+  </div>
+
+  <!-- Bento Grid 2x2 asymmetric -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <!-- Card 1: Native Rust Performance (Large 2-col) -->
+    <div class="glass-card rounded-2xl p-6 sm:p-8 md:col-span-2 relative overflow-hidden flex flex-col justify-between group">
+      <div class="absolute -right-10 -bottom-10 w-64 h-64 bg-[#6EBEB4]/10 rounded-full blur-3xl pointer-events-none group-hover:bg-[#6EBEB4]/15 transition-colors"></div>
+      
+      <div>
+        <div class="w-12 h-12 rounded-xl bg-[#6EBEB4]/10 border border-[#6EBEB4]/20 flex items-center justify-center text-[#6EBEB4] mb-6">
+          <Zap class="w-6 h-6" />
+        </div>
+        <h3 class="text-xl sm:text-2xl font-bold text-white mb-3 tracking-tight">
+          纯 Rust 无框架设计，毫秒冷启
+        </h3>
+        <p class="text-gray-400 text-sm sm:text-base leading-relaxed mb-6">
+          没有臃肿的 LangChain 抽象，没有 Python / Node 解释器与数百兆的 node_modules。直接基于 <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">reqwest</code> + <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">tokio</code> + <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">ratatui</code> 构建，单一二进制文件秒级下发，即开即用。
+        </p>
+      </div>
+
+      <!-- Live Comparison Bars -->
+      <div class="space-y-3 pt-4 border-t border-white/5 font-mono text-xs">
+        <div>
+          <div class="flex justify-between text-gray-400 mb-1">
+            <span class="text-white font-semibold">rico (Rust)</span>
+            <span class="text-[#6EBEB4]">~18 MB 内存占用</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-white/5 overflow-hidden">
+            <div class="h-full bg-[#6EBEB4] rounded-full w-[8%]"></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between text-gray-500 mb-1">
+            <span>常见 Python / TS Agent</span>
+            <span>350 MB ~ 650 MB</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-white/5 overflow-hidden">
+            <div class="h-full bg-gray-600 rounded-full w-[85%]"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2: Prompt Cache (1-col) -->
+    <div id="cache" class="glass-card rounded-2xl p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between group">
+      <div class="absolute -right-6 -bottom-6 w-48 h-48 bg-[#10B981]/10 rounded-full blur-2xl pointer-events-none"></div>
+
+      <div>
+        <div class="w-12 h-12 rounded-xl bg-[#10B981]/10 border border-[#10B981]/20 flex items-center justify-center text-[#10B981] mb-6">
+          <Sparkles class="w-6 h-6" />
+        </div>
+        <h3 class="text-xl font-bold text-white mb-3 tracking-tight">
+          Prompt Cache 深度适配
+        </h3>
+        <p class="text-gray-400 text-sm leading-relaxed mb-6">
+          开启流式响应的 <code class="font-mono text-[#8FE2D8] text-xs">stream_options.include_usage</code>，多源兼容 OpenAI、MiniMax 与 DeepSeek 缓存命中细粒度指标，多轮对话 API 费用直降 70% 以上。
+        </p>
+      </div>
+
+      <div class="rounded-xl bg-[#0B0D13]/80 p-3.5 border border-white/5 font-mono text-xs space-y-1.5">
+        <div class="text-[#10B981] font-semibold flex items-center justify-between">
+          <span>/cache 命令支持</span>
+          <span>CH85.2%</span>
+        </div>
+        <div class="text-gray-400 text-[11px]">单轮/总计请求命中率精准追踪</div>
+      </div>
+    </div>
+
+    <!-- Card 3: 4 Core Tools Sandbox (1-col) -->
+    <div class="glass-card rounded-2xl p-6 sm:p-8 relative overflow-hidden flex flex-col justify-between group">
+      <div>
+        <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-6">
+          <Shield class="w-6 h-6" />
+        </div>
+        <h3 class="text-xl font-bold text-white mb-3 tracking-tight">
+          四核安全沙箱工具链
+        </h3>
+        <p class="text-gray-400 text-sm leading-relaxed mb-6">
+          提供最符合编码范式的 4 大工具：<span class="font-mono text-white">read</span>（行范围截断）、<span class="font-mono text-white">write</span>、<span class="font-mono text-white">edit</span>（严格唯一匹配检测）、<span class="font-mono text-white">bash</span>（子进程凭证剥离与超时限制）。
+        </p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+        <div class="rounded-lg bg-white/5 p-2 text-center text-gray-300">read</div>
+        <div class="rounded-lg bg-white/5 p-2 text-center text-gray-300">write</div>
+        <div class="rounded-lg bg-white/5 p-2 text-center text-gray-300">edit</div>
+        <div class="rounded-lg bg-white/5 p-2 text-center text-gray-300">bash</div>
+      </div>
+    </div>
+
+    <!-- Card 4: Fault-Tolerant Session & Context Compaction (Large 2-col) -->
+    <div class="glass-card rounded-2xl p-6 sm:p-8 md:col-span-2 relative overflow-hidden flex flex-col justify-between group">
+      <div class="absolute -left-10 -bottom-10 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div>
+        <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-6">
+          <Database class="w-6 h-6" />
+        </div>
+        <h3 class="text-xl sm:text-2xl font-bold text-white mb-3 tracking-tight">
+          FNV-1a 工作区指纹与会话持久化
+        </h3>
+        <p class="text-gray-400 text-sm sm:text-base leading-relaxed mb-6">
+          按工作区路径自动哈希生成会话文件，基于 JSONL 进行增量追加，崩溃容错断尾解析。随时执行 <code class="font-mono text-[#8FE2D8] bg-white/5 px-1.5 py-0.5 rounded">rico --continue</code> 无缝回到上一轮上下文。超长上下文触发智能摘要压缩，保留最近有效消息窗口。
+        </p>
+      </div>
+
+      <div class="rounded-xl bg-[#0B0D13]/70 p-4 border border-white/5 font-mono text-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-gray-300">
+          <span class="text-[#6EBEB4]">$</span>
+          <span>rico --continue</span>
+        </div>
+        <span class="text-gray-500 text-[11px]">自动恢复历史并累计 Prompt Cache 指标</span>
+      </div>
+    </div>
+  </div>
+</section>

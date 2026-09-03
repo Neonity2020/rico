@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --rico-bg: #0b0d13;
+    --rico-surface: #131722;
+    --rico-elevated: #1a2030;
+    --rico-border: rgba(255, 255, 255, 0.08);
+    --rico-border-bright: rgba(255, 255, 255, 0.16);
+    --rico-accent: #6ebeb4;
+    --rico-accent-light: #8fe2d8;
+    --rico-accent-glow: rgba(110, 190, 180, 0.2);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background-color: var(--rico-bg);
+    color: #f3f4f6;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  ::selection {
+    background: rgba(110, 190, 180, 0.3);
+    color: #ffffff;
+  }
+}
+
+/* Custom Utilities and Glows */
+.glass-panel {
+  background: rgba(19, 23, 34, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: linear-gradient(180deg, rgba(26, 32, 48, 0.6) 0%, rgba(19, 23, 34, 0.8) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  border-color: rgba(110, 190, 180, 0.35);
+  box-shadow: 0 0 30px -5px rgba(110, 190, 180, 0.15);
+  transform: translateY(-2px);
+}
+
+.accent-glow {
+  box-shadow: 0 0 40px -10px rgba(110, 190, 180, 0.3);
+}
+
+.bg-radial-glow {
+  background: radial-gradient(circle at 50% 0%, rgba(110, 190, 180, 0.12) 0%, transparent 60%);
+}
+
+.bg-grid-pattern {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0b0d13;
+}
+::-webkit-scrollbar-thumb {
+  background: #1c2234;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a344d;
+}

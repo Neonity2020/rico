@@ -1,0 +1,20 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Navbar from '../components/Navbar.astro';
+import Hero from '../components/Hero.astro';
+import TerminalDemo from '../components/TerminalDemo.astro';
+import BentoGrid from '../components/BentoGrid.astro';
+import CommandsReference from '../components/CommandsReference.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<Layout>
+  <Navbar />
+  <main class="flex-1">
+    <Hero />
+    <TerminalDemo />
+    <BentoGrid />
+    <CommandsReference />
+  </main>
+  <Footer />
+</Layout>

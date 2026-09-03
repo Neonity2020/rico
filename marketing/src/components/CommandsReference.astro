@@ -1,0 +1,126 @@
+---
+import { Keyboard, Command, Settings, ArrowDownUp } from 'lucide-astro';
+---
+
+<section id="commands" class="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-white/5">
+  <div class="text-center mb-16">
+    <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#6EBEB4]/10 text-[#6EBEB4] text-xs font-mono font-medium mb-3 border border-[#6EBEB4]/20">
+      <Keyboard class="w-3.5 h-3.5" />
+      <span>双模交互手册</span>
+    </div>
+    <h2 class="text-3xl sm:text-5xl font-extrabold tracking-tight text-white mb-4">
+      沉浸式 TUI 快捷键与 CLI 指令
+    </h2>
+    <p class="text-gray-400 text-base sm:text-lg max-w-2xl mx-auto font-normal">
+      提供开箱即用的极速键鼠交互体系与轻量化斜杠指令。
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+    <!-- TUI Keybindings -->
+    <div class="glass-card rounded-2xl p-6 sm:p-8">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-lg bg-[#6EBEB4]/10 border border-[#6EBEB4]/20 flex items-center justify-center text-[#6EBEB4]">
+          <Keyboard class="w-5 h-5" />
+        </div>
+        <div>
+          <h3 class="text-lg font-bold text-white">TUI 交互快捷键</h3>
+          <p class="text-xs text-gray-400">默认启动模式 (rico)</p>
+        </div>
+      </div>
+
+      <div class="space-y-3 font-mono text-xs">
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">提交当前任务</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">Enter</kbd>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">输入多行换行</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">Shift+Enter / Alt+Enter</kbd>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">历史输入回溯 / 草稿暂存</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">↑ / ↓</kbd>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">平滑滚动对话历史</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">PgUp / PgDn 或 鼠标滚轮</kbd>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">对话文本选择并自动复制</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">鼠标左键拖拽选区</kbd>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">清空对话上下文 (开始新会话)</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">Ctrl+L</kbd>
+        </div>
+
+        <div class="flex items-center justify-between p-2.5 rounded-lg bg-white/5 border border-white/5">
+          <span class="text-gray-300">快速退出</span>
+          <kbd class="px-2 py-1 rounded bg-[#0B0D13] border border-white/10 text-white font-semibold shadow">Ctrl+C / Esc / Ctrl+D</kbd>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLI Commands & Config -->
+    <div class="space-y-6">
+      <!-- Slash Commands -->
+      <div class="glass-card rounded-2xl p-6 sm:p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+            <Command class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-white">斜杠交互命令</h3>
+            <p class="text-xs text-gray-400">TUI 与 CLI REPL 通用指令</p>
+          </div>
+        </div>
+
+        <div class="space-y-3 font-mono text-xs">
+          <div class="p-3 rounded-lg bg-white/5 border border-white/5 flex items-start justify-between gap-3">
+            <div>
+              <span class="text-[#6EBEB4] font-bold">/cache</span>
+              <span class="text-gray-500 text-[11px] ml-2">(/stats)</span>
+              <p class="text-gray-400 font-sans text-xs mt-0.5">即时查询当前会话 Prompt Cache 命中次数、命中率与节省的 Tokens</p>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-lg bg-white/5 border border-white/5 flex items-start justify-between gap-3">
+            <div>
+              <span class="text-[#6EBEB4] font-bold">/session</span>
+              <p class="text-gray-400 font-sans text-xs mt-0.5">查看当前持久化 JSONL 会话文件的绝对存储路径与历史概况</p>
+            </div>
+          </div>
+
+          <div class="p-3 rounded-lg bg-white/5 border border-white/5 flex items-start justify-between gap-3">
+            <div>
+              <span class="text-[#6EBEB4] font-bold">/clear</span>
+              <p class="text-gray-400 font-sans text-xs mt-0.5">重置上下文与内存统计，立即开启一条新会话</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Env Config -->
+      <div class="glass-card rounded-2xl p-6 border border-white/5">
+        <div class="flex items-center gap-3 mb-4">
+          <Settings class="w-4 h-4 text-gray-400" />
+          <h4 class="text-sm font-bold text-white font-mono">多级配置加载优先级</h4>
+        </div>
+        <p class="text-xs text-gray-400 font-mono leading-relaxed mb-3">
+          1. 环境变量 <span class="text-white">OPENAI_API_KEY</span><br />
+          2. <span class="text-white">.env.local</span> / <span class="text-white">.env</span> (当前工作区目录)<br />
+          3. <span class="text-white">~/.config/rico/config.env</span> (用户级全局配置)
+        </p>
+        <div class="text-[11px] font-mono text-gray-500 border-t border-white/5 pt-2">
+          凭证防护：读取 API Key 后自动从子进程环境中剥离，杜绝任意脚本外泄。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

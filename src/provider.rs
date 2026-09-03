@@ -50,6 +50,30 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+    pub cached_tokens: usize,
+}
+
+impl TokenUsage {
+    #[allow(dead_code)]
+    pub fn cache_hit_rate(&self) -> f64 {
+        if self.prompt_tokens == 0 {
+            0.0
+        } else {
+            (self.cached_tokens as f64 / self.prompt_tokens as f64) * 100.0
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
@@ -59,6 +83,8 @@ struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<&'static str>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
 }
 
 pub struct OpenAiProvider {
@@ -90,61 +116,98 @@ impl OpenAiProvider {
         messages: &[Message],
         tools: &[Value],
         on_text: &mut impl FnMut(&str),
-    ) -> Result<Message> {
-        let mut response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&ChatRequest {
-                model: &self.model,
-                messages,
-                tools: (!tools.is_empty()).then_some(tools),
-                tool_choice: (!tools.is_empty()).then_some("auto"),
-                stream: true,
-            })
-            .send()
-            .await
-            .context("无法连接 OpenAI 兼容 provider")?;
+    ) -> Result<(Message, Option<TokenUsage>)> {
+        'attempts: for attempt in 0..2 {
+            let response = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .bearer_auth(&self.api_key)
+                .json(&ChatRequest {
+                    model: &self.model,
+                    messages,
+                    tools: (!tools.is_empty()).then_some(tools),
+                    tool_choice: (!tools.is_empty()).then_some("auto"),
+                    stream: true,
+                    stream_options: Some(StreamOptions {
+                        include_usage: true,
+                    }),
+                })
+                .send()
+                .await;
+            let mut response = match response {
+                Ok(response) => response,
+                Err(error) if attempt == 0 && is_retryable_transport_error(&error) => {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+                Err(error) => return Err(error).context("无法连接 OpenAI 兼容 provider"),
+            };
 
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.context("读取 provider 响应失败")?;
-            anyhow::bail!("provider 返回 {status}: {body}");
-        }
-
-        let mut buffer = Vec::new();
-        let mut content = String::new();
-        let mut calls: BTreeMap<usize, ToolCall> = BTreeMap::new();
-        while let Some(chunk) = response.chunk().await.context("读取流式响应失败")? {
-            buffer.extend_from_slice(&chunk);
-            while let Some(end) = find_event_end(&buffer) {
-                let event = buffer.drain(..end).collect::<Vec<_>>();
-                let delimiter = if buffer.starts_with(b"\r\n\r\n") {
-                    4
-                } else {
-                    2
-                };
-                buffer.drain(..delimiter);
-                process_event(&event, &mut content, &mut calls, on_text)?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await.context("读取 provider 响应失败")?;
+                anyhow::bail!("provider 返回 {status}: {body}");
             }
-        }
-        if !buffer.is_empty() {
-            process_event(&buffer, &mut content, &mut calls, on_text)?;
-        }
 
-        let tool_calls = (!calls.is_empty()).then(|| calls.into_values().collect());
-        Ok(Message {
-            role: "assistant".to_owned(),
-            content: (!content.is_empty()).then_some(content),
-            tool_calls,
-            tool_call_id: None,
-        })
+            let mut buffer = Vec::new();
+            let mut content = String::new();
+            let mut calls: BTreeMap<usize, ToolCall> = BTreeMap::new();
+            let mut usage: Option<TokenUsage> = None;
+            let mut stream_complete = false;
+            loop {
+                let chunk = match response.chunk().await {
+                    Ok(Some(chunk)) => chunk,
+                    Ok(None) => break,
+                    Err(error) if stream_complete && is_tls_close_without_notify(&error) => {
+                        break;
+                    }
+                    Err(error)
+                        if attempt == 0
+                            && content.is_empty()
+                            && calls.is_empty()
+                            && is_retryable_transport_error(&error) =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        continue 'attempts;
+                    }
+                    Err(error) => return Err(error).context("读取流式响应失败"),
+                };
+                buffer.extend_from_slice(&chunk);
+                while let Some(end) = find_event_end(&buffer) {
+                    let event = buffer.drain(..end).collect::<Vec<_>>();
+                    let delimiter = if buffer.starts_with(b"\r\n\r\n") {
+                        4
+                    } else {
+                        2
+                    };
+                    buffer.drain(..delimiter);
+                    stream_complete |= event_completes_stream(&event);
+                    process_event(&event, &mut content, &mut calls, &mut usage, on_text)?;
+                }
+            }
+            if !buffer.is_empty() {
+                process_event(&buffer, &mut content, &mut calls, &mut usage, on_text)?;
+            }
+
+            let tool_calls = (!calls.is_empty()).then(|| calls.into_values().collect());
+            return Ok((
+                Message {
+                    role: "assistant".to_owned(),
+                    content: (!content.is_empty()).then_some(content),
+                    tool_calls,
+                    tool_call_id: None,
+                },
+                usage,
+            ));
+        }
+        unreachable!("流式请求重试循环至少会返回一次")
     }
 
     pub async fn summarize(&self, messages: &[Message]) -> Result<String> {
         let mut ignore = |_text: &str| {};
         self.chat_stream(messages, &[], &mut ignore)
             .await?
+            .0
             .content
             .context("压缩模型没有返回摘要")
     }
@@ -160,10 +223,82 @@ fn find_event_end(buffer: &[u8]) -> Option<usize> {
     }
 }
 
+fn event_completes_stream(event: &[u8]) -> bool {
+    let event = String::from_utf8_lossy(event);
+    event.lines().any(|line| {
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            return false;
+        };
+        if data == "[DONE]" {
+            return true;
+        }
+        serde_json::from_str::<Value>(data)
+            .ok()
+            .and_then(|value| value.pointer("/choices/0/finish_reason").cloned())
+            .is_some_and(|reason| !reason.is_null())
+    })
+}
+
+fn is_tls_close_without_notify(error: &reqwest::Error) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(cause) = current {
+        if cause
+            .to_string()
+            .contains("peer closed connection without sending TLS close_notify")
+        {
+            return true;
+        }
+        current = cause.source();
+    }
+    false
+}
+
+fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_timeout() || is_tls_close_without_notify(error)
+}
+
+fn parse_usage(value: &Value) -> Option<TokenUsage> {
+    let prompt_tokens = value
+        .get("prompt_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let completion_tokens = value
+        .get("completion_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let total_tokens = value
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+
+    let cached_tokens = value
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| value.get("prompt_cache_hit_tokens"))
+        .or_else(|| value.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+
+    if prompt_tokens > 0 || completion_tokens > 0 || total_tokens > 0 || cached_tokens > 0 {
+        Some(TokenUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: if total_tokens > 0 {
+                total_tokens
+            } else {
+                prompt_tokens + completion_tokens
+            },
+            cached_tokens,
+        })
+    } else {
+        None
+    }
+}
+
 fn process_event(
     event: &[u8],
     content: &mut String,
     calls: &mut BTreeMap<usize, ToolCall>,
+    usage: &mut Option<TokenUsage>,
     on_text: &mut impl FnMut(&str),
 ) -> Result<()> {
     let event = String::from_utf8_lossy(event);
@@ -176,6 +311,13 @@ fn process_event(
             continue;
         }
         let value: Value = serde_json::from_str(data).context("无法解析 SSE 数据")?;
+
+        if let Some(usage_val) = value.get("usage") {
+            if let Some(parsed) = parse_usage(usage_val) {
+                *usage = Some(parsed);
+            }
+        }
+
         let Some(delta) = value.pointer("/choices/0/delta") else {
             continue;
         };
@@ -239,10 +381,15 @@ mod tests {
         let mut content = String::new();
         let mut streamed = String::new();
         let mut calls = BTreeMap::new();
+        let mut usage = None;
         for event in events {
-            process_event(event.as_bytes(), &mut content, &mut calls, &mut |text| {
-                streamed.push_str(text)
-            })
+            process_event(
+                event.as_bytes(),
+                &mut content,
+                &mut calls,
+                &mut usage,
+                &mut |text| streamed.push_str(text),
+            )
             .unwrap();
         }
         let call = calls.get(&0).unwrap();
@@ -250,6 +397,50 @@ mod tests {
         assert_eq!(streamed, "你");
         assert_eq!(call.function.name, "bash");
         assert_eq!(call.function.arguments, r#"{"command":"pwd"}"#);
+        assert!(usage.is_none());
+    }
+
+    #[test]
+    fn parses_openai_prompt_cache_usage() {
+        let event = r#"data: {"choices":[],"usage":{"prompt_tokens":1200,"completion_tokens":80,"total_tokens":1280,"prompt_tokens_details":{"cached_tokens":1024}}}"#;
+        let mut content = String::new();
+        let mut calls = BTreeMap::new();
+        let mut usage = None;
+        process_event(
+            event.as_bytes(),
+            &mut content,
+            &mut calls,
+            &mut usage,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        let usage = usage.expect("应成功解析 usage");
+        assert_eq!(usage.prompt_tokens, 1200);
+        assert_eq!(usage.completion_tokens, 80);
+        assert_eq!(usage.total_tokens, 1280);
+        assert_eq!(usage.cached_tokens, 1024);
+        assert!((usage.cache_hit_rate() - 85.33).abs() < 0.1);
+    }
+
+    #[test]
+    fn parses_deepseek_prompt_cache_hit_tokens() {
+        let event = r#"data: {"choices":[],"usage":{"prompt_tokens":500,"completion_tokens":50,"total_tokens":550,"prompt_cache_hit_tokens":250}}"#;
+        let mut content = String::new();
+        let mut calls = BTreeMap::new();
+        let mut usage = None;
+        process_event(
+            event.as_bytes(),
+            &mut content,
+            &mut calls,
+            &mut usage,
+            &mut |_| {},
+        )
+        .unwrap();
+
+        let usage = usage.expect("应成功解析 deepseek usage");
+        assert_eq!(usage.cached_tokens, 250);
+        assert_eq!(usage.cache_hit_rate(), 50.0);
     }
 
     #[test]
@@ -261,10 +452,15 @@ mod tests {
         let mut content = String::new();
         let mut streamed = String::new();
         let mut calls = BTreeMap::new();
+        let mut usage = None;
         for event in events {
-            process_event(event.as_bytes(), &mut content, &mut calls, &mut |text| {
-                streamed.push_str(text)
-            })
+            process_event(
+                event.as_bytes(),
+                &mut content,
+                &mut calls,
+                &mut usage,
+                &mut |text| streamed.push_str(text),
+            )
             .unwrap();
         }
         let call = calls.get(&0).unwrap();
@@ -276,5 +472,19 @@ mod tests {
     #[test]
     fn finds_earliest_sse_delimiter() {
         assert_eq!(find_event_end(b"first\r\n\r\nsecond\n\n"), Some(5));
+    }
+
+    #[test]
+    fn recognizes_protocol_level_stream_completion() {
+        assert!(event_completes_stream(b"data: [DONE]"));
+        assert!(event_completes_stream(
+            br#"data: {"choices":[{"finish_reason":"stop","delta":{}}]}"#
+        ));
+        assert!(event_completes_stream(
+            br#"data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}"#
+        ));
+        assert!(!event_completes_stream(
+            br#"data: {"choices":[{"finish_reason":null,"delta":{"content":"hi"}}]}"#
+        ));
     }
 }

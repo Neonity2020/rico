@@ -2,4 +2,9 @@
 .env.local
 pi-source/
 120x30
+node_modules/
+marketing/node_modules/
+marketing/.astro/
+marketing/dist/
+
 

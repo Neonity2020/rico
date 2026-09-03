@@ -18,14 +18,25 @@
 ├── CODE_GUIDE.md       # 架构导读与安全设计（本文档）
 └── src
     ├── main.rs         # 入口：CLI 解析 (--tui/--cli)、配置加载、CLI REPL 循环驱动
-    ├── agent.rs        # Agent 核心：提示词、工具调度循环、上下文自动压缩、可选事件 sink
-    ├── provider.rs     # Provider：OpenAI 兼容 SSE 流式请求与 tool_calls 解析拼接
-    ├── session.rs      # 会话存储：基于 JSONL 的追加存储、崩溃容错与会话恢复
+    ├── agent.rs        # Agent 核心：提示词、工具调度循环、上下文自动压缩、事件通道
+    ├── provider.rs     # Provider：OpenAI 兼容 SSE 流式请求与 tool_calls、Token Usage 解析
+    ├── session.rs      # 会话存储：基于 JSONL 的追加存储、缓存命中统计与会话恢复
     ├── tools.rs        # 工具注册表：read / write / edit / bash 及路径与进程沙箱
-    └── tui.rs          # TUI 前端：ratatui 渲染、crossterm 输入、与 Agent 后台任务的事件通道
+    ├── markdown/       # Markdown 解析与渲染文件组
+    │   ├── mod.rs      # 统一入口与各块级元素协调 (render)
+    │   ├── code.rs     # 代码块词法高亮 (highlight_code) 与等宽框线闭合
+    │   ├── table.rs    # GFM 管道表格解析、CJK 全角对齐与截断填充
+    │   └── inline.rs   # 行内格式（粗体/斜体/代码）与段落折行
+    └── tui/            # TUI 交互前端文件组
+        ├── mod.rs      # 终端生命周期控制与主事件循环 (run)
+        ├── app.rs      # 核心状态模型 (App)、事件更新与指令拦截
+        ├── event.rs    # 键盘按键分发与鼠标交互
+        ├── editor.rs   # Unicode 字符编辑、光标几何位置与折行换算
+        ├── view.rs     # 对话气泡、欢迎横幅、状态栏与底栏视图渲染
+        └── selection.rs# 选区高亮计算与系统剪贴板集成 (pbcopy / OSC 52)
 ```
 
-保持轻量无框架设计：无外部 LLM SDK，直接基于 `reqwest` + `tokio` + `serde_json` 实现；TUI 同样基于 `ratatui` + `crossterm` 直接构造，不引入 `tui-react` 等额外抽象。
+保持轻量无框架设计：无外部 LLM SDK，直接基于 `reqwest` + `tokio` + `serde_json` 实现；TUI 同样基于 `ratatui` + `crossterm` 直接构造，采用高内聚、低耦合的文件组结构组织，无过度抽象。
 
 ---
 
