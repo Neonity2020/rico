@@ -777,6 +777,28 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn process_group_exists(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &format!("-{pid}")])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    /// SIGKILL 送达与进程组被内核回收之间是异步的，CI 机器上立刻检查可能误报存活。
+    /// 返回 true 表示轮询超时后进程组仍然存活。
+    #[cfg(unix)]
+    async fn wait_for_process_group_exit(pid: u32) -> bool {
+        for _ in 0..100 {
+            if !process_group_exists(pid) {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        true
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn cancelling_bash_kills_its_process_group() {
         let root = temp_workspace();
@@ -801,12 +823,7 @@ mod tests {
         task.abort();
         let _ = task.await;
 
-        let process_group_alive = std::process::Command::new("kill")
-            .args(["-0", &format!("-{pid}")])
-            .output()
-            .unwrap()
-            .status
-            .success();
+        let process_group_alive = wait_for_process_group_exit(pid).await;
         if process_group_alive {
             kill_process_group(Some(pid));
         }
