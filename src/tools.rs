@@ -785,12 +785,33 @@ mod tests {
             .unwrap_or(false)
     }
 
-    /// SIGKILL 送达与进程组被内核回收之间是异步的，CI 机器上立刻检查可能误报存活。
+    /// `kill -0` 对僵尸进程同样成功：组长收到 SIGKILL 后仍是僵尸，要等父进程
+    /// （本测试进程）回收，而 tokio 对 abort 任务遗留子进程的孤儿回收在 CI 上
+    /// 可能滞后超过 1 秒。因此用 ps 检查组长状态，把僵尸视为已退出。
+    #[cfg(unix)]
+    fn process_group_alive(pid: u32) -> bool {
+        if !process_group_exists(pid) {
+            return false;
+        }
+        let state = std::process::Command::new("ps")
+            .args(["-o", "state=", "-p", &pid.to_string()])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        match state {
+            Some(state) => !state.starts_with('Z'),
+            // kill -0 报告组仍存在但 ps 看不到组长时保守视为存活，交给轮询兜底
+            None => true,
+        }
+    }
+
+    /// SIGKILL 送达与进程组消失之间是异步的，轮询至多 1 秒。
     /// 返回 true 表示轮询超时后进程组仍然存活。
     #[cfg(unix)]
     async fn wait_for_process_group_exit(pid: u32) -> bool {
         for _ in 0..100 {
-            if !process_group_exists(pid) {
+            if !process_group_alive(pid) {
                 return false;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -823,11 +844,11 @@ mod tests {
         task.abort();
         let _ = task.await;
 
-        let process_group_alive = wait_for_process_group_exit(pid).await;
-        if process_group_alive {
+        let group_survived = wait_for_process_group_exit(pid).await;
+        if group_survived {
             kill_process_group(Some(pid));
         }
-        assert!(!process_group_alive, "取消后 shell 进程组仍然存活");
+        assert!(!group_survived, "取消后 shell 进程组仍然存活");
         let _ = fs::remove_dir_all(root);
     }
 
