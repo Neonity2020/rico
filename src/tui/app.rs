@@ -370,14 +370,14 @@ impl App {
                 .map(str::to_ascii_lowercase);
             let Some(provider) = requested else {
                 self.entries.push(Entry::Info(
-                    "用法：/login minimax 或 /login 9router，然后在输入框中粘贴 API Key。\nAPI Key 将以掩码显示，不会写入会话历史。".into(),
+                    "用法：/login minimax、/login 9router 或 /login agnes，然后在输入框中粘贴 API Key。\nAPI Key 将以掩码显示，不会写入会话历史。".into(),
                 ));
                 self.transcript_scroll.scroll_to_end();
                 return;
             };
-            if !matches!(provider.as_str(), "minimax" | "9router") {
+            if !matches!(provider.as_str(), "minimax" | "9router" | "agnes") {
                 self.entries.push(Entry::Error(
-                    "不支持的 provider，可选：minimax、9router".into(),
+                    "不支持的 provider，可选：minimax、9router、agnes".into(),
                 ));
                 self.transcript_scroll.scroll_to_end();
                 return;

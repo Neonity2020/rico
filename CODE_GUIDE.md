@@ -1,6 +1,6 @@
 # rico 代码导读
 
-`rico` 是一个最小化的 Rust coding agent。它通过 MiniMax 或 9Router 的 OpenAI 兼容 Chat Completions 流式接口驱动模型，可在运行时切换 provider，并提供四个面向编程的核心工具（`read`, `write`, `edit`, `bash`），支持多轮会话持久化与长对话上下文自动压缩。
+`rico` 是一个最小化的 Rust coding agent。它通过 MiniMax 或 9Router 的 OpenAI 兼容 Chat Completions 流式接口驱动模型，可在运行时切换 provider，并提供五个面向编程的核心工具（`read`, `write`, `edit`, `bash`, `web_search`），支持多轮会话持久化与长对话上下文自动压缩。
 
 默认启动一个 ratatui TUI（终端 UI），同时保留传统的 stdin/stdout REPL 作为 `--cli` 兼容入口。
 
@@ -58,14 +58,17 @@
    - 优先从 `~/.config/rico/auth.json` 读取 Pi 风格 API Key credential；环境变量仅作为兼容回退和 `rico auth import` 的迁移源。
    - 分别读取 MiniMax 与 9Router 配置，未配置 API Key 的 provider 不会加入运行时列表；旧版 `OPENAI_*` 作为 MiniMax 配置的回退。
    - `RICO_PROVIDER` 可指定启动 provider；运行中通过 `/provider` 切换，现有会话上下文保持不变。
-   - TUI 的 `/login minimax` 与 `/login 9router` 使用掩码输入，写入 `auth.json` 后立即启用 provider；API Key 不进入会话历史。
+   - TUI 的 `/login minimax`、`/login 9router` 与 `/login agnes` 使用掩码输入，写入 `auth.json` 后立即启用 provider；API Key 不进入会话历史。
    - `auth.json` 新文件使用 `0600` 权限和原子替换写入；环境变量密钥读取后立即从当前进程中移除，防止随后的 `bash` 子进程环境暴露给未知命令。
 4. **运行模式分派**：
    - `--cli`：调用 `run_cli(agent, initial_task)`，维持原 stdin/stdout REPL。
    - 默认 / `--tui`：调用 `tui::run(agent)`，进入全屏 TUI。
 5. **CLI REPL 特殊指令**：
    - `/clear`：重置对话上下文，开启新会话。
-   - `/session`：查看当前保存的 JSONL 文件绝对路径。
+   - `/cache` 或 `/stats`：查看 Prompt 缓存命中统计。
+   - `/providers`：列出当前及所有已配置 provider。
+   - `/provider`：在已配置 provider 间轮换；`/provider <name>`：切换到指定 provider。
+   - `/session`：查看当前保存的 JSONL 文件绝对路径（有请求记录时附缓存统计）。
    - `/exit` / `/quit` / `Ctrl-D`：优雅退出。
 
 ---
@@ -76,14 +79,16 @@
 
 ```rust
 pub struct Agent {
-    provider: OpenAiProvider,
+    providers: Vec<OpenAiProvider>,          // 多 provider 运行时列表
+    active_provider: Option<usize>,          // 当前生效的 provider 索引（支持 /provider 切换）
     tools: ToolRegistry,
-    max_steps: usize,
+    max_steps: Option<usize>,                // None = 不限轮数（AGENT_MAX_STEPS=0/未设置）
     messages: Vec<Message>,
     session: SessionStore,
     compact_threshold: usize,
     keep_recent_tokens: usize,
     event_sink: Option<Box<dyn FnMut(AgentEvent) + Send>>,
+    cancel_requested: Arc<AtomicBool>,       // 共享取消标记（Esc → 三个 await 点生效）
 }
 ```
 
@@ -92,8 +97,8 @@ pub struct Agent {
 ```text
 1. maybe_compact() -> 检查 token 估算，必要时自动向模型请求生成摘要并压缩旧消息
 2. push user message -> 追加到 session.jsonl
-3. step in 1..=max_steps:
-    a. emit AgentEvent::Step { current, total }
+3. 循环执行 step（若设置了 max_steps，最多执行 max_steps 轮工具调用）:
+    a. emit AgentEvent::Step { current, total: Option<usize> }
     b. provider.chat_stream(messages, tool_definitions, on_text)
        -> 每段文本都通过 on_text 闭包转发给调用方
     c. push assistant message (包含 text 与 tool_calls)
@@ -105,7 +110,12 @@ pub struct Agent {
         - 遍历每一个 call，通过 tools.execute(name, arguments) 执行
         - emit AgentEvent::ToolResult { output }
         - push tool 结果消息 (role="tool", tool_call_id=call.id)
-4. 超过 max_steps 时 emit AgentEvent::Error 并返回限制提示
+4. 优雅收尾轮（Graceful Final Turn）：达到 max_steps 后不再报错中断，而是额外执行
+   一次总结调用——向模型传递空工具定义（禁止继续调用工具），并在末条 tool 消息上
+   临时注入收尾提示（仅对本次请求可见，不落盘），要求模型汇报已完成的工作、当前
+   瓶颈与下一步建议。总结文本流式输出，末尾附加超限说明；随后作为 assistant 消息
+   正常写入历史与会话（保持 user → tool → assistant 的消息闭环），emit
+   AgentEvent::Complete 并返回 Ok
 ```
 
 ### 上下文自动压缩（`maybe_compact`）
@@ -124,11 +134,12 @@ pub enum AgentEvent {
     Delta(String),
     ToolStart { name: String, args: String },
     ToolResult { output: String },
-    Step { current: usize, total: usize },
+    Step { current: usize, total: Option<usize> },
     Compacting,
     Complete,
     Cancelled { cache_stats: CacheStats },
     Error(String),
+    Usage(TokenUsage),
     ProviderChanged { provider: String, model: String },
 }
 ```
@@ -182,7 +193,7 @@ rico 默认注册五个面向编码与研发的内置工具：
    - 拒绝绝对路径、包含 `..` 的路径及 Windows 盘符。
    - 逐级检查路径各分量，拒绝任何符号链接（Symlink），防止指向外部敏感文件。
 2. **敏感凭据保护（`is_sensitive_path`）**：
-   - 拦截 `.env*`、`auth.json`、`.aws`、`.ssh`、`id_rsa`、`id_ed25519`、`id_ecdsa`、`id_dsa`、`config.env`、`*.key`、`*.pem` 等凭据文件，防止文件工具意外泄露密钥。
+   - 对路径任一分量做大小写不敏感匹配，拦截 `.env` / `.env.*`、`auth.json`、`config.env`、`.aws`、`.git`、`.netrc`、`.npmrc`、`.pypirc`、`.ssh`、`credentials`、`id_rsa`、`id_ed25519`、`id_ecdsa`、`id_dsa`、`*.key`、`*.pem` 等凭据与版本库文件，防止文件工具意外泄露密钥。
 3. **孤儿进程清理**：
    - `BashTool` 在 Unix 系统下设置 `command.process_group(0)`。超时触发时，向整个进程组发送 `SIGKILL`，杜绝后台死循环脚本或失控子进程残留。
    - 命令本身退出后，stdout/stderr 管道最多再等待 2 秒；若后台进程仍持有管道，则终止进程组并返回错误，避免输出采集永久等待。
@@ -225,16 +236,18 @@ main 启动
 
 ```text
 ┌──────────────────────────────────────────┐
-│  rico · kr/claude-sonnet-4.5 · idle      │  ← Header (3 行)
-├──────────────────────────────────────────┤
 │  你> ...                                 │
-│  助手> ...                               │  ← History (自适应)
-│  ⚙ bash: ls -la                         │     (支持滚动)
+│  助手> ...                               │  ← 会话区 (自适应，支持滚动)
+│  ⚙ bash: ls -la                         │
 │    ✓ → ...                               │
 ├──────────────────────────────────────────┤
-│ > _                                     │  ← Input (3 行)
+│                                          │
+│  ⣾ 正在思考…  Ctrl-C 退出                │  ← 状态栏 (2 行，仅 busy 时显示 spinner)
 ├──────────────────────────────────────────┤
-│ session: .../foo.jsonl · 1.2k tokens    │  ← Status (1 行)
+│ > _                                     │  ← 编辑器 (1~6 行 + 边框，随内容增高)
+├──────────────────────────────────────────┤
+│ ~/code · session.jsonl · minimax · M3   │  ← 底栏 (2 行)：工作目录 · 会话文件 ·
+│ 约 1.2k 词元 · 缓存命中 · Enter 发送 …   │     provider · 模型 | 词元 · 状态 · 快捷键
 └──────────────────────────────────────────┘
 ```
 
@@ -248,7 +261,7 @@ main 启动
 ### 安全一致性
 
 - TUI 模式与 CLI 模式共用同一个 `Agent`，因此 **文件工具路径防护、敏感文件黑名单、API Key 环境变量移除、超时、输出限制与进程组清理** 等行为保持一致。
-- TUI 不会调用任何额外 shell 或网络命令；唯一网络路径仍由 `provider.rs` 控制。
+- TUI 自身不发起任何额外 shell 或网络调用；运行时的网络出口只有两条：`provider.rs` 的模型请求，以及 `web_search` 工具对 Exa API（`api.exa.ai`）的独立检索请求。
 
 ---
 

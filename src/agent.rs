@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 
 use crate::{
     auth::{auth_path, AuthStore},
@@ -178,7 +179,7 @@ impl Agent {
             None => {
                 if self.providers.is_empty() {
                     anyhow::bail!(
-                        "尚未登录任何 provider，请先使用 /login minimax 或 /login 9router"
+                        "尚未登录任何 provider，请先使用 /login minimax、/login 9router 或 /login agnes"
                     );
                 }
                 self.active_provider
@@ -196,7 +197,8 @@ impl Agent {
         let name = match requested.to_ascii_lowercase().as_str() {
             "minimax" => "minimax",
             "9router" | "router" => "9router",
-            _ => anyhow::bail!("不支持的 provider：{requested}（可选 minimax 或 9router）"),
+            "agnes" => "agnes",
+            _ => anyhow::bail!("不支持的 provider：{requested}（可选 minimax、9router 或 agnes）"),
         };
         let mut auth = AuthStore::load(auth_path()?)?;
         auth.set_api_key(name.to_owned(), key.clone())?;
@@ -221,6 +223,16 @@ impl Agent {
                     .ok()
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or_else(|| "kr/claude-sonnet-4.5".into()),
+            ),
+            "agnes" => (
+                env::var("AGNES_BASE_URL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "https://apihub.agnes-ai.com/v1".into()),
+                env::var("AGNES_MODEL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "agnes-3.0-flash".into()),
             ),
             _ => unreachable!(),
         };
@@ -278,37 +290,89 @@ impl Agent {
                 return Err(TurnCancelled.into());
             }
             step += 1;
-            if let Some(max) = self.max_steps {
-                if step > max {
-                    let err = anyhow::anyhow!("达到最大工具循环次数 {max}")
-                        .context("agent 未能在限制内完成任务");
-                    return Err(err);
-                }
-            }
+            let is_wrap_up = self.max_steps.is_some_and(|max| step > max);
 
-            if self.event_sink.is_none() {
-                if let Some(max) = self.max_steps {
-                    eprintln!("[agent {step}/{max}] 正在思考…");
-                } else {
-                    eprintln!("[agent 步骤 {step}] 正在思考…");
+            if is_wrap_up {
+                let max = self.max_steps.unwrap();
+                if self.event_sink.is_none() {
+                    eprintln!("[agent 收尾总结] 达到最大工具循环次数 {max}，正在生成阶段性总结…");
                 }
+                self.emit(AgentEvent::Step {
+                    current: max,
+                    total: self.max_steps,
+                });
+            } else {
+                if self.event_sink.is_none() {
+                    if let Some(max) = self.max_steps {
+                        eprintln!("[agent {step}/{max}] 正在思考…");
+                    } else {
+                        eprintln!("[agent 步骤 {step}] 正在思考…");
+                    }
+                }
+                self.emit(AgentEvent::Step {
+                    current: step,
+                    total: self.max_steps,
+                });
             }
-            self.emit(AgentEvent::Step {
-                current: step,
-                total: self.max_steps,
-            });
             let provider = self
                 .provider()
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("尚未登录 provider，请先使用 /login 登录"))?;
-            let (assistant, usage) = cancellable(
+
+            let summary_messages;
+            let (request_definitions, request_messages): (&[Value], &[Message]) = if is_wrap_up {
+                let max = self.max_steps.unwrap();
+                let mut msgs = self.messages.clone();
+                let notice = format!(
+                    "\n\n[系统通知：已达到单次回合最大工具调用次数限制（{max} 次），工具已被禁用。请根据当前已执行的操作和已有信息，向用户清晰总结已完成的工作、当前进展及下一步建议。]"
+                );
+                if let Some(last) = msgs.last_mut() {
+                    if last.role == "tool" {
+                        if let Some(content) = &mut last.content {
+                            content.push_str(&notice);
+                        } else {
+                            last.content = Some(notice);
+                        }
+                    } else {
+                        msgs.push(Message::text("user", notice.trim().to_owned()));
+                    }
+                }
+                summary_messages = msgs;
+                (&[][..], summary_messages.as_slice())
+            } else {
+                (definitions.as_slice(), self.messages.as_slice())
+            };
+
+            let (mut assistant, usage) = cancellable(
                 Arc::clone(&self.cancel_requested),
-                provider.chat_stream(&self.messages, &definitions, on_text),
+                provider.chat_stream(request_messages, request_definitions, on_text),
             )
             .await??;
             if let Some(usage_info) = usage {
                 self.emit(AgentEvent::Usage(usage_info));
             }
+
+            if is_wrap_up {
+                let max = self.max_steps.unwrap();
+                let notice = format!(
+                    "\n\n> ⚠️ *已达到单次回合最大步数限制（{max} 步），以上为阶段性执行总结。您可以输入新指令继续推进。*"
+                );
+                on_text(&notice);
+
+                let raw_content = assistant.content.take().unwrap_or_default();
+                let final_text = if raw_content.trim().is_empty() {
+                    format!("已达到单次回合最大步数限制（{max} 步），未能生成进一步总结。{notice}")
+                } else {
+                    format!("{}{notice}", raw_content.trim())
+                };
+
+                assistant.content = Some(final_text.clone());
+                assistant.tool_calls = None;
+                self.push_message_with_usage(assistant, usage)?;
+                self.emit(AgentEvent::Complete);
+                return Ok(final_text);
+            }
+
             let calls = assistant.tool_calls.clone().unwrap_or_default();
             let final_text = assistant.content.clone().unwrap_or_default();
             self.push_message_with_usage(assistant, usage)?;
@@ -582,5 +646,69 @@ mod tests {
 
         let selected = agent.switch_provider(Some("MINIMAX")).unwrap();
         assert_eq!(selected, ("minimax".into(), "MiniMax-M3".into()));
+    }
+
+    #[tokio::test]
+    async fn max_steps_triggers_graceful_wrap_up_turn_without_error() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+
+        std::thread::spawn(move || {
+            // First request: agent calls step 1, provider returns a tool call
+            let (mut stream1, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 8 * 1024];
+            let _ = stream1.read(&mut request);
+            let sse1 = concat!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_test\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"echo ok\\\"}\"}}]}}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            write!(stream1, "{sse1}").unwrap();
+            stream1.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(stream1);
+
+            // Second request: step 2 > max (max_steps is 1), wrap-up step, provider returns text summary
+            let (mut stream2, _) = listener.accept().unwrap();
+            let _ = stream2.read(&mut request);
+            let sse2 = concat!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"已执行了命令并完成阶段性汇报。\"}}]}\n\n",
+                "data: [DONE]\n\n"
+            );
+            write!(stream2, "{sse2}").unwrap();
+            stream2.flush().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(stream2);
+        });
+
+        let provider = OpenAiProvider::new(
+            "test-key".to_owned(),
+            format!("http://{address}"),
+            "test-model".to_owned(),
+        );
+        let mut agent = Agent::new_ephemeral(provider, PathBuf::from("."), Some(1));
+        let mut streamed = String::new();
+        let result = agent
+            .run_turn("test task".into(), |text| streamed.push_str(text))
+            .await;
+
+        let output = result.expect("达到最大步数时不应抛错，应成功返回总结");
+        assert!(output.contains("已执行了命令并完成阶段性汇报。"));
+        assert!(output.contains("已达到单次回合最大步数限制（1 步）"));
+        assert!(streamed.contains("已达到单次回合最大步数限制（1 步）"));
+
+        // 验证消息历史保持完整的闭环: [system, user, assistant(tool_calls), tool(result), assistant(summary)]
+        assert_eq!(agent.messages.len(), 5);
+        assert_eq!(agent.messages[0].role, "system");
+        assert_eq!(agent.messages[1].role, "user");
+        assert_eq!(agent.messages[2].role, "assistant");
+        assert!(agent.messages[2].tool_calls.is_some());
+        assert_eq!(agent.messages[3].role, "tool");
+        assert_eq!(agent.messages[4].role, "assistant");
+        assert!(agent.messages[4].tool_calls.is_none());
     }
 }

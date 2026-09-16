@@ -1,6 +1,6 @@
 # rico
 
-一个最小 Rust coding agent，可通过 MiniMax 或 9Router 的 OpenAI 兼容接口驱动，并可在 TUI 中运行时切换 provider。
+一个最小 Rust coding agent，可通过 MiniMax、9Router 或 Agnes (Sapiens AI) 的 OpenAI 兼容接口驱动，并可在 TUI 中运行时切换 provider。
 
 ## 配置
 
@@ -15,6 +15,10 @@
   "9router": {
     "type": "api_key",
     "key": "你的-9Router-API-Key"
+  },
+  "agnes": {
+    "type": "api_key",
+    "key": "你的-Agnes-API-Key"
   }
 }
 ```
@@ -27,12 +31,12 @@ rico auth list
 rico auth path
 ```
 
-导入并确认启动正常后，从 `config.env` 删除 `MINIMAX_API_KEY`、`ROUTER_API_KEY` 和旧版 `OPENAI_API_KEY`。`auth.json` 优先于环境变量；环境变量仅用于兼容和迁移。可用 `RICO_AUTH` 指定其他认证文件路径。
+导入并确认启动正常后，从 `config.env` 删除 `MINIMAX_API_KEY`、`ROUTER_API_KEY`、`AGNES_API_KEY` 和旧版 `OPENAI_API_KEY`。`auth.json` 优先于环境变量；环境变量仅用于兼容和迁移。可用 `RICO_AUTH` 指定其他认证文件路径。
 
 非敏感设置继续放在用户级配置 `~/.config/rico/config.env`：
 
 ```dotenv
-# 可选：minimax 或 9router；不设置时 MiniMax 优先
+# 可选：minimax、9router 或 agnes；不设置时 MiniMax 优先
 # RICO_PROVIDER=minimax
 
 MINIMAX_BASE_URL=https://api.minimaxi.com/v1
@@ -40,12 +44,18 @@ MINIMAX_MODEL=MiniMax-M3
 
 ROUTER_BASE_URL=http://localhost:20128/v1
 ROUTER_MODEL=kr/claude-sonnet-4.5
+
+# Agnes 3.0 Flash 默认走 Sapiens AI 的 OpenAI 兼容接口
+AGNES_BASE_URL=https://apihub.agnes-ai.com/v1
+AGNES_MODEL=agnes-3.0-flash
 # AGENT_MAX_STEPS=20  # 可选：默认无轮数限制
 ```
 
-只需配置实际使用的 provider；同时配置两组 API Key 后即可在 TUI 内切换。`RICO_PROVIDER` 控制启动时使用的 provider，可设为 `minimax` 或 `9router`。如果未设置，则使用配置列表中的第一个 provider（MiniMax 优先）。
+只需配置实际使用的 provider；同时配置多组 API Key 后即可在 TUI 内切换。`RICO_PROVIDER` 控制启动时使用的 provider，可设为 `minimax`、`9router` 或 `agnes`。如果未设置，则使用配置列表中的第一个 provider（MiniMax 优先）。
 
 使用 9Router 前，先在 Dashboard 中连接上游 provider、生成 API Key，并将模型名改成已启用的模型或 combo。使用 9Router Cloud 时，将 `ROUTER_BASE_URL` 改为 `https://9router.com/v1`。
+
+使用 Agnes 3.0 Flash 时，可以直接使用 Sapiens AI 的官方 API，也可以自建 sglang / llama-server 暴露 OpenAI 兼容端点后通过 `AGNES_BASE_URL` 指向本地服务。
 
 ```bash
 chmod 600 ~/.config/rico/config.env
@@ -60,6 +70,7 @@ chmod 600 ~/.config/rico/config.env
 /provider            # 在已配置 provider 间轮换
 /provider 9router    # 切换到 9Router
 /provider minimax    # 切换到 MiniMax
+/provider agnes      # 切换到 Agnes 3.0 Flash
 ```
 
 切换后，状态栏和模型名称会立即更新；当前对话上下文会保留，下一次模型请求开始使用新 provider。
@@ -71,6 +82,7 @@ chmod 600 ~/.config/rico/config.env
 ```text
 /login minimax
 /login 9router
+/login agnes
 ```
 
 随后在输入框中输入 API Key 并按 Enter。输入内容会被掩码，不会进入会话历史；成功后凭证会写入 `auth.json`，并立即启用对应 provider。按 Esc 可取消登录。

@@ -10,7 +10,7 @@ pub mod event;
 pub mod selection;
 pub mod view;
 
-use std::{io::stdout, path::PathBuf, process::Command, time::Duration};
+use std::{io::stdout, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -48,17 +48,11 @@ pub async fn run(mut agent: Agent) -> Result<()> {
     let initial_cache_stats = agent.cache_stats();
     let cancellation_handle = agent.cancellation_handle();
     let cwd = app::display_cwd()?;
-    let initial_tty_size = stty_terminal_size();
 
     configure_terminal()?;
     defer! { let _ = restore_terminal(); }
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).context("无法初始化终端")?;
-    if let Some((width, height)) = initial_tty_size {
-        terminal
-            .resize(Rect::new(0, 0, width, height))
-            .context("同步终端画布失败")?;
-    }
     terminal.clear().context("无法清空终端")?;
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -85,22 +79,6 @@ pub async fn run(mut agent: Agent) -> Result<()> {
             biased;
             _ = frame_clock.tick() => {
                 app.tick = app.tick.wrapping_add(1);
-
-                // Some embedded terminals update the PTY size without delivering a
-                // reliable SIGWINCH/Resize event. Reconcile with `stty size` once per
-                // second so the alternate-screen viewport cannot remain letterboxed.
-                if app.tick.is_multiple_of(20) {
-                    if let Some((width, height)) = stty_terminal_size() {
-                        let size = terminal.size().context("读取终端画布失败")?;
-                        if size.width != width || size.height != height {
-                            terminal
-                                .resize(Rect::new(0, 0, width, height))
-                                .context("同步终端画布失败")?;
-                            terminal.clear().context("重绘终端失败")?;
-                            redraw = true;
-                        }
-                    }
-                }
 
                 if redraw || app.busy {
                     terminal.autoresize().context("调整终端画布失败")?;
@@ -199,24 +177,6 @@ async fn run_agent(
         }
     }
     Ok(())
-}
-
-fn stty_terminal_size() -> Option<(u16, u16)> {
-    let output = Command::new("stty").arg("size").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_terminal_size(std::str::from_utf8(&output.stdout).ok()?)
-}
-
-fn parse_terminal_size(value: &str) -> Option<(u16, u16)> {
-    let mut parts = value.split_whitespace();
-    let rows = parts.next()?.parse().ok()?;
-    let columns = parts.next()?.parse().ok()?;
-    if rows == 0 || columns == 0 || parts.next().is_some() {
-        return None;
-    }
-    Some((columns, rows))
 }
 
 fn configure_terminal() -> Result<()> {
@@ -517,13 +477,6 @@ mod tests {
         assert_eq!(Status::RunningTool("bash".into()).label(), "正在运行 bash…");
         assert_eq!(Status::Compacting.label(), "正在压缩上下文…");
         assert_eq!(Status::Cancelling.label(), "正在取消任务…");
-    }
-
-    #[test]
-    fn parses_stty_rows_then_columns() {
-        assert_eq!(parse_terminal_size("52 183\n"), Some((183, 52)));
-        assert_eq!(parse_terminal_size("0 183"), None);
-        assert_eq!(parse_terminal_size("invalid"), None);
     }
 
     #[test]

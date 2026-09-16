@@ -81,6 +81,20 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| "kr/claude-sonnet-4.5".to_owned());
         providers.push(OpenAiProvider::named("9router", api_key, base_url, model));
     }
+    if let Some(api_key) = auth
+        .api_key("agnes")
+        .or_else(|| provider_key("AGNES_API_KEY", None))
+    {
+        let base_url = env::var("AGNES_BASE_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "https://apihub.agnes-ai.com/v1".to_owned());
+        let model = env::var("AGNES_MODEL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "agnes-3.0-flash".to_owned());
+        providers.push(OpenAiProvider::named("agnes", api_key, base_url, model));
+    }
     let requested_provider = env::var("RICO_PROVIDER").ok();
     let active_provider = select_active_provider(&providers, requested_provider.as_deref())?;
     let exa_api_key = auth
@@ -88,6 +102,7 @@ async fn main() -> Result<()> {
         .or_else(|| provider_key("EXA_API_KEY", None));
     env::remove_var("MINIMAX_API_KEY");
     env::remove_var("ROUTER_API_KEY");
+    env::remove_var("AGNES_API_KEY");
     env::remove_var("OPENAI_API_KEY");
     env::remove_var("EXA_API_KEY");
     let max_steps = match env::var("AGENT_MAX_STEPS") {
@@ -220,8 +235,8 @@ TUI 快捷键:
   Ctrl+C          退出
 
 CLI REPL 命令:
-  /login          登录并保存 MiniMax 或 9Router API Key（TUI 中输入）
-  /provider       切换到下一个 provider（可指定 9router 或 minimax）
+  /login          登录并保存 MiniMax、9Router 或 Agnes API Key（TUI 中输入）
+  /provider       切换到下一个 provider（可指定 9router / minimax / agnes）
   /providers      查看当前及可用 provider
   /clear          清空对话上下文，开始新会话
   /session        查看当前 JSONL 会话文件路径及缓存命中统计
@@ -230,13 +245,16 @@ CLI REPL 命令:
 
 配置:
   可通过当前目录的 .env.local / .env、~/.config/rico/config.env 或环境变量设置:
-  RICO_PROVIDER    启动 provider：minimax 或 9router（默认首个已配置项）
+  RICO_PROVIDER    启动 provider：minimax、9router 或 agnes（默认首个已配置项）
   MINIMAX_API_KEY  MiniMax API Key（兼容迁移；推荐存入 auth.json）
   MINIMAX_BASE_URL 默认 https://api.minimaxi.com/v1
   MINIMAX_MODEL    默认 MiniMax-M3
   ROUTER_API_KEY   9Router API Key（兼容迁移；推荐存入 auth.json）
   ROUTER_BASE_URL  默认 http://localhost:20128/v1
   ROUTER_MODEL     默认 kr/claude-sonnet-4.5
+  AGNES_API_KEY    Agnes (Sapiens AI) API Key（兼容迁移；推荐存入 auth.json）
+  AGNES_BASE_URL   默认 https://apihub.agnes-ai.com/v1
+  AGNES_MODEL      默认 agnes-3.0-flash
   EXA_API_KEY      Exa 搜索引擎 API Key（用于 web_search 工具；推荐存入 auth.json）
   OPENAI_*         兼容旧版 MiniMax 配置
   AGENT_MAX_STEPS  最大工具循环次数（默认无限制；可设正整数限制步数）"#,
@@ -256,12 +274,15 @@ fn run_auth_command(arguments: &[String]) -> Result<()> {
             if let Some(key) = provider_key("ROUTER_API_KEY", None) {
                 entries.push(("9router".to_owned(), key));
             }
+            if let Some(key) = provider_key("AGNES_API_KEY", None) {
+                entries.push(("agnes".to_owned(), key));
+            }
             if let Some(key) = provider_key("EXA_API_KEY", None) {
                 entries.push(("exa".to_owned(), key));
             }
             let imported = auth.import_api_keys(entries)?;
             if imported == 0 {
-                anyhow::bail!("没有找到可导入的 MINIMAX_API_KEY、ROUTER_API_KEY 或 EXA_API_KEY");
+                anyhow::bail!("没有找到可导入的 MINIMAX_API_KEY、ROUTER_API_KEY、AGNES_API_KEY 或 EXA_API_KEY");
             }
             println!(
                 "已将 {imported} 个 provider 凭证保存到 {}",
