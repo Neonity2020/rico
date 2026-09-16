@@ -1153,6 +1153,7 @@ dependencies = [
  "crossterm",
  "dotenvy",
  "futures-util",
+ "libc",
  "ratatui",
  "reqwest",
  "scopeguard",

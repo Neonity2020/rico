@@ -404,9 +404,10 @@ async fn collect_process_output(
 #[cfg(unix)]
 fn kill_process_group(child_id: Option<u32>) {
     if let Some(pid) = child_id {
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", &format!("-{pid}")])
-            .output();
+        // 直接走系统调用，避免依赖 PATH 上的外部 kill 实现
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
     }
 }
 
@@ -776,34 +777,28 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[cfg(unix)]
-    fn process_group_exists(pid: u32) -> bool {
-        std::process::Command::new("kill")
-            .args(["-0", &format!("-{pid}")])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-
-    /// `kill -0` 对僵尸进程同样成功：组长收到 SIGKILL 后仍是僵尸，要等父进程
-    /// （本测试进程）回收，而 tokio 对 abort 任务遗留子进程的孤儿回收在 CI 上
-    /// 可能滞后超过 1 秒。因此用 ps 检查组长状态，把僵尸视为已退出。
+    /// 检查进程组是否仍有活着的成员。僵尸（已收到 SIGKILL、等待父进程回收）
+    /// 视为已退出：`kill -0` 对僵尸同样成功，而 tokio 对 abort 任务遗留子进程
+    /// 的孤儿回收在 CI 上可能明显滞后。逐个成员检查，避免组长状态掩盖幸存的
+    /// 其他成员（如 shell 的 sleep 子进程）。
     #[cfg(unix)]
     fn process_group_alive(pid: u32) -> bool {
-        if !process_group_exists(pid) {
-            return false;
-        }
-        let state = std::process::Command::new("ps")
-            .args(["-o", "state=", "-p", &pid.to_string()])
+        let Ok(output) = std::process::Command::new("ps")
+            .args(["-eo", "pgid=,stat="])
             .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-        match state {
-            Some(state) => !state.starts_with('Z'),
-            // kill -0 报告组仍存在但 ps 看不到组长时保守视为存活，交给轮询兜底
-            None => true,
+        else {
+            // ps 不可用时保守视为存活，交给轮询兜底
+            return true;
+        };
+        if !output.status.success() {
+            return true;
         }
+        let target = pid.to_string();
+        String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            let mut fields = line.split_whitespace();
+            fields.next() == Some(target.as_str())
+                && !fields.next().unwrap_or_default().starts_with('Z')
+        })
     }
 
     /// SIGKILL 送达与进程组消失之间是异步的，轮询至多 1 秒。
@@ -846,6 +841,23 @@ mod tests {
 
         let group_survived = wait_for_process_group_exit(pid).await;
         if group_survived {
+            if let Ok(output) = std::process::Command::new("ps")
+                .args(["-eo", "pid=,ppid=,pgid=,stat=,comm="])
+                .output()
+            {
+                let target = pid.to_string();
+                let listing = String::from_utf8_lossy(&output.stdout);
+                let members: Vec<&str> = listing
+                    .lines()
+                    .filter(|line| line.split_whitespace().nth(2) == Some(target.as_str()))
+                    .collect();
+                eprintln!(
+                    "SHELL={:?}；进程组 {pid} 轮询超时后仍存活（ps 退出码 {:?}），剩余成员：\n{}",
+                    env::var("SHELL"),
+                    output.status.code(),
+                    members.join("\n")
+                );
+            }
             kill_process_group(Some(pid));
         }
         assert!(!group_survived, "取消后 shell 进程组仍然存活");
