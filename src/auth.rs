@@ -138,11 +138,16 @@ pub fn auth_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     fn temp_auth_path() -> PathBuf {
+        // 并行测试可能在同一纳秒启动，仅靠时间戳会生成相同路径导致互相覆盖
+        let count = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
         env::temp_dir().join(format!(
-            "rico-auth-{}-{}.json",
+            "rico-auth-{}-{}-{count}.json",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
